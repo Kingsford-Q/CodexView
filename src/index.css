@@ -28,6 +28,38 @@ body {
   min-height: 100vh;
 }
 
+.remote-cursor {
+    width: 2px !important;
+    background-color: #0663cc;
+}
+.remote-cursor-label {
+    background: #0663cc;
+    color: white;
+    font-size: 10px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    position: absolute;
+    top: -15px;
+    white-space: nowrap;
+}
+
+/* Vertical bar for the remote user */
+.remote-cursor-line {
+    width: 2px !important;
+    background-color: #3b82f6; /* Blue cursor */
+}
+
+/* Name tag for the remote user */
+.remote-cursor-label-style::before {
+    content: "Guest"; /* You can customize this with JS later */
+    position: absolute;
+    top: -16px;
+    background: #3b82f6;
+    color: white;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 2px;
+}
 
 
 button {

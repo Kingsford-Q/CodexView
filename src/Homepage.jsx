@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useEffect, useRef } from "react";
+import Editor from '@monaco-editor/react';
 
 import easy from './assets/easy.svg';
 import live from './assets/live.svg';
@@ -10,6 +11,7 @@ import quote from './assets/quot.svg';
 import img1 from './assets/img1.jpg';
 import img2 from './assets/img2.jpg';
 import img3 from './assets/img3.jpg';
+import { io } from "socket.io-client";
 
 const Homepage = () => {
     const [activeTab, setActiveTab] = useState('home');
@@ -24,7 +26,11 @@ const Homepage = () => {
     const [roomCreated, setRoomCreated] = useState(false);
     const [roomId, setRoomId] = useState("");
     const [copied, setCopied] = useState(false);
-    
+    const [codeContent, setCodeContent] = useState('// Welcome to CodexView\nconsole.log("Hello World");');
+    const [output, setOutput] = useState("");
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const isRemoteChange = useRef(false);
+    const [socket, setSocket] = useState(null);
     // Session state
     const [isInSession, setIsInSession] = useState(false);
     const [isHost, setIsHost] = useState(true);
@@ -33,7 +39,6 @@ const Homepage = () => {
     ]);
     const [sessionStartTime, setSessionStartTime] = useState(null);
     const [sessionTimer, setSessionTimer] = useState('00:00:00');
-    const [codeContent, setCodeContent] = useState('// Welcome to CodexView Live Session\n// Start coding here...\n');
     const [notifications, setNotifications] = useState([]);
     const [isMuted, setIsMuted] = useState(false);
     const [isPushToTalk, setIsPushToTalk] = useState(false);
@@ -44,24 +49,199 @@ const Homepage = () => {
     const [joinRoomError, setJoinRoomError] = useState("");
     const [joinRoomName, setJoinRoomName] = useState("");
 
+    useEffect(() => {
+    // Replace with your backend URL
+    const newSocket = io("http://localhost:5000"); 
+    setSocket(newSocket);
+
+    return () => newSocket.close();
+}, []);
+
     // Mobile session UI state
     const [mobileSessionTab, setMobileSessionTab] = useState('editor'); // 'editor' | 'participants'
 
+    const menuRef = useRef(null);
+    const micStreamRef = useRef(null);
+    const micTrackRef = useRef(null);
+    const editorTextareaRef = useRef(null);
+    const [language, setLanguage] = useState("javascript");
+    const [editorTheme, setEditorTheme] = useState("vs-dark"); // "vs-dark" or "light"
+    const [fontSize, setFontSize] = useState(14);
+    const [snapshots, setSnapshots] = useState([]);
+    const editorRef = useRef(null);
+    const remoteCursorsRef = useRef({});
 
-    const menuRef = useRef(null); 
+    // Example of syncing a peer's cursor
+
+
+useEffect(() => {
+    if (!socket) return;
+
+    socket.on('cursor-mirrored', ({ participantId, participantName, position }) => {
+        // ✅ The "Guard": If editor isn't ready yet, just exit and don't crash
+        if (!editorRef.current) return;
+
+        const { line, column } = position;
+        const oldDecorations = remoteCursorsRef.current[participantId] || [];
+
+        const newDecorations = editorRef.current.deltaDecorations(oldDecorations, [
+            {
+                range: new monaco.Range(line, column, line, column),
+                options: {
+                    className: `remote-cursor-${participantId} remote-cursor-line`,
+                    hoverMessage: { value: participantName },
+                    beforeContentClassName: `remote-cursor-label-${participantId} remote-cursor-label-style`,
+                }
+            }
+        ]);
+
+        remoteCursorsRef.current[participantId] = newDecorations;
+    });
+
+    return () => socket.off('cursor-mirrored');
+}, [socket]);
+
+// 1. Format Code Logic
+    const formatCode = () => {
+    try {
+        if (!window.prettier) {
+            alert("Prettier is still loading...");
+            return;
+        }
+
+        const formatted = window.prettier.format(codeContent, {
+            // Pick the right parser based on your language state
+            parser: language === 'html' ? "html" : "babel",
+            plugins: window.prettierPlugins,
+            semi: true,
+            singleQuote: true,
+            tabWidth: 2,
+        });
+
+        setCodeContent(formatted);
+    } catch (err) {
+        // If there is a syntax error, Prettier will tell you exactly where
+        console.error("Format Error:", err.message);
+        // Optional: show this error in your output console
+        setOutput(`Format Error: ${err.message}`);
+    }
+};
+
+const handleCodeChange = (value) => {
+    if (isRemoteChange.current) {
+        isRemoteChange.current = false; // Reset and ignore emitting
+        return;
+    }
+    const newContent = value || "";
+    
+    // 1. Update local state immediately for zero-latency typing
+    setCodeContent(newContent);
+
+    // 2. Broadcast the change to all other mirrors in the room
+    if (socket && roomId) {
+        socket.emit('code-update', {
+            roomId,
+            content: newContent
+        });
+    }
+};
+
+useEffect(() => {
+    if (!socket) return;
+
+    // Listen for the mirror event from the server
+    socket.on('language-updated', (newLang) => {
+        setLanguage(newLang);
+        
+        // Optional: Show a small notification that language was changed by host
+        addNotification({
+            id: Date.now(),
+            message: `Language switched to ${newLang}`,
+            type: 'info'
+        });
+    });
+
+    return () => socket.off('language-updated');
+}, [socket]);
+
+
+    // 2. Snapshot Logic
+    const takeSnapshot = () => {
+        const timestamp = new Date().toLocaleTimeString();
+        setSnapshots([{ id: Date.now(), time: timestamp, content: codeContent }, ...snapshots]);
+    };
 
     useEffect(() => {
-        const handleClickOutside = (event) => {
-        if (menuRef.current && !menuRef.current.contains(event.target)) {
-            setMenuOpen(false);
-        }
+        const handlePointerDownOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) {
+                setMenuOpen(false);
+            }
         };
 
-        document.addEventListener("click", handleClickOutside);
+        // Use pointerdown (capture) so mobile taps are handled reliably.
+        document.addEventListener("pointerdown", handlePointerDownOutside, true);
         return () => {
-        document.removeEventListener("click", handleClickOutside);
+            document.removeEventListener("pointerdown", handlePointerDownOutside, true);
         };
     }, []);
+
+    const fallbackCopyTextToClipboard = (text) => {
+        try {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.setAttribute('readonly', '');
+            textArea.style.position = 'fixed';
+            textArea.style.top = '-9999px';
+            textArea.style.left = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            return ok;
+        } catch {
+            return false;
+        }
+    };
+
+    const copyToClipboard = async (text) => {
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch {
+            // fall back below
+        }
+        return fallbackCopyTextToClipboard(text);
+    };
+
+    const stopMic = () => {
+        try {
+            micTrackRef.current?.stop?.();
+            micStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+        } catch {
+            // ignore
+        } finally {
+            micTrackRef.current = null;
+            micStreamRef.current = null;
+        }
+    };
+
+    const ensureMic = async () => {
+        if (micTrackRef.current) return true;
+        try {
+            const stream = await navigator.mediaDevices?.getUserMedia?.({ audio: true });
+            if (!stream) return false;
+            const track = stream.getAudioTracks?.()[0];
+            if (!track) return false;
+            micStreamRef.current = stream;
+            micTrackRef.current = track;
+            return true;
+        } catch {
+            return false;
+        }
+    };
 
     // Session timer effect
     useEffect(() => {
@@ -107,6 +287,20 @@ const Homepage = () => {
         },
     ];
 
+    const [files, setFiles] = useState({
+        "index.js": {
+            name: "index.js",
+            language: "javascript",
+            value: "// Welcome to CodexView\nconsole.log('Hello World');"
+        },
+        "styles.css": {
+            name: "styles.css",
+            language: "css",
+            value: "body { background: #f0f0f0; }"
+        }
+    });
+    const [activeFile, setActiveFile] = useState("index.js");
+
 
     const logo = "</>";
 
@@ -130,15 +324,26 @@ const Homepage = () => {
 
         if (newErrors.roomName || newErrors.subject) return;
 
-        const newRoomId = crypto.randomUUID();
-        setRoomId(newRoomId);
-        setRoomCreated(true);
+        try {
+            const newRoomId = generateRoomId();
+            setRoomId(newRoomId);
+            setRoomCreated(true);
+            addNotification('Room created successfully!', 'success');
+        } catch {
+            addNotification('Failed to create room on this device. Please try again.', 'error');
+        }
     };
 
     const handleCopyRoomId = () => {
-        navigator.clipboard.writeText(roomId);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        copyToClipboard(roomId).then((ok) => {
+            if (ok) {
+                setCopied(true);
+                addNotification('Room ID copied to clipboard', 'success');
+                setTimeout(() => setCopied(false), 2000);
+            } else {
+                addNotification('Unable to copy room ID on this device', 'error');
+            }
+        });
     };
 
     const handleStartSession = () => {
@@ -146,13 +351,19 @@ const Homepage = () => {
         setActiveTab('session');
         setSessionStartTime(Date.now());
         setIsHost(true);
+        setMobileSessionTab('editor');
         // Add initial notification
         addNotification('Session started successfully!', 'success');
+        ensureMic().then((ok) => {
+            if (!ok) addNotification('Microphone permission not granted (voice controls will be limited)', 'info');
+        });
     };
 
     const handleEndSession = () => {
+        stopMic();
         setIsInSession(false);
         setActiveTab('home');
+        setOutput("");
         setSessionStartTime(null);
         setSessionTimer('00:00:00');
         setCodeContent('// Welcome to CodexView Live Session\n// Start coding here...\n');
@@ -171,11 +382,13 @@ const Homepage = () => {
     };
 
     const handleLeaveSession = () => {
+        stopMic();
         setIsInSession(false);
         setActiveTab('home');
         setSessionStartTime(null);
         setSessionTimer('00:00:00');
         setNotifications([]);
+        setOutput("");
     };
 
     const addNotification = (message, type = 'info') => {
@@ -186,11 +399,35 @@ const Homepage = () => {
         }, 3000);
     };
 
+    const generateRoomId = () => {
+        // Mobile Safari (and some older browsers) may not support crypto.randomUUID()
+        if (crypto?.randomUUID) return crypto.randomUUID();
+
+        // RFC4122-ish v4 using getRandomValues
+        if (crypto?.getRandomValues) {
+            const bytes = new Uint8Array(16);
+            crypto.getRandomValues(bytes);
+            bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+            bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+            const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+
+        // Last resort: time + random
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    };
+
     const handleCopyInviteLink = () => {
         const inviteLink = `${window.location.origin}?room=${roomId}`;
-        navigator.clipboard.writeText(inviteLink);
-        setInviteLinkCopied(true);
-        setTimeout(() => setInviteLinkCopied(false), 2000);
+        copyToClipboard(inviteLink).then((ok) => {
+            if (ok) {
+                setInviteLinkCopied(true);
+                addNotification('Invite link copied to clipboard', 'success');
+                setTimeout(() => setInviteLinkCopied(false), 2000);
+            } else {
+                addNotification('Unable to copy invite link on this device', 'error');
+            }
+        });
     };
 
     const handleMuteToggle = () => {
@@ -254,6 +491,7 @@ const Homepage = () => {
         setSubject("Live Coding Session");
         setActiveTab('session');
         setSessionStartTime(Date.now());
+        setMobileSessionTab('editor');
         
         // Add user as participant (non-host)
         setParticipants([
@@ -262,6 +500,9 @@ const Homepage = () => {
         ]);
         
         addNotification('Successfully joined the room!', 'success');
+        ensureMic().then((ok) => {
+            if (!ok) addNotification('Microphone permission not granted (voice controls will be limited)', 'info');
+        });
         setJoinRoomKey("");
         setJoinRoomName("");
     };
@@ -288,6 +529,90 @@ const Homepage = () => {
         setMenuOpen(false);
     };
 
+    useEffect(() => {
+        const track = micTrackRef.current;
+        if (!track) return;
+        // If muted, disable mic unless push-to-talk is currently pressed.
+        track.enabled = Boolean((!isMuted) || isPushToTalk);
+    }, [isMuted, isPushToTalk]);
+
+    // Cleanup mic on unmount just in case
+    useEffect(() => {
+        return () => stopMic();
+    }, []);
+
+    // Auto-resize textarea on mobile
+    const adjustTextareaHeight = () => {
+        const textarea = editorTextareaRef.current;
+        if (!textarea) return;
+        
+        // Reset height to auto to get the correct scrollHeight
+        textarea.style.height = 'auto';
+        
+        // On mobile, auto-grow but cap at max height (60vh)
+        const isMobile = window.innerWidth < 1024; // lg breakpoint
+        if (isMobile) {
+            const maxHeight = window.innerHeight * 0.6; // 60vh
+            const scrollHeight = textarea.scrollHeight;
+            const newHeight = Math.min(scrollHeight, maxHeight);
+            textarea.style.height = `${newHeight}px`;
+            textarea.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
+        } else {
+            // Desktop: keep flex-1 behavior
+            textarea.style.height = 'auto';
+            textarea.style.overflowY = 'auto';
+        }
+    };
+
+    useEffect(() => {
+        adjustTextareaHeight();
+    }, [codeContent, mobileSessionTab]);
+
+    useEffect(() => {
+        // Adjust on window resize
+        const handleResize = () => {
+            adjustTextareaHeight();
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    const runCode = async () => {
+    setOutput("Running...\n");
+    const logs = [];
+    const customLogger = (...args) => {
+        logs.push(args.map(arg => String(arg)).join(' '));
+        setOutput(logs.join('\n'));
+    };
+
+    if (language === 'javascript') {
+        try {
+            const execute = new Function('console', codeContent);
+            execute({ log: customLogger });
+        } catch (err) {
+            setOutput(`JS Error: ${err.message}`);
+        }
+    } 
+    
+    else if (language === 'python') {
+        try {
+            // Load Pyodide if it's not already loaded
+            if (!window.loadPyodide) {
+                setOutput("Error: Pyodide script not found in index.html");
+                return;
+            }
+            const pyodide = await window.loadPyodide();
+            
+            // Redirect Python's print() to our console
+            pyodide.setStdout({ batched: (str) => customLogger(str) });
+            
+            await pyodide.runPythonAsync(codeContent);
+        } catch (err) {
+            setOutput(`Python Error: ${err.message}`);
+        }
+    }
+};
+
 
     return(
         <main className = "w-full min-h-screen flex flex-col">
@@ -298,29 +623,44 @@ const Homepage = () => {
                         <div className = "text-black font-medium md:text-2xl lg:text-2xl">CodexView</div>
                     </div>
 
-                    <div className = "flex md:hidden" ref={menuRef}>
-                        <div className = "w-10 h-10 flex justify-center items-center">
-                            <img src = {menu} className = "w-full object-cover " 
-                            onClick = { () => (setMenuOpen(!menuOpen)) }
-                            />
-                        </div>
-                    </div>
+                    <div className="flex md:hidden" ref={menuRef}>
+                        <button
+                            type="button"
+                            className="w-20 h-20 flex justify-center items-center"
+                            onClick={() => setMenuOpen((v) => !v)}
+                            aria-label="Open menu"
+                        >
+                            <img src={menu} className="w-full object-cover" />
+                        </button>
 
-                    {menuOpen && (
-                        <div className="absolute top-20.5 left-0 flex flex-col justify-center items-center bg-white p-4 shadow-md rounded w-full">
-                        {["home", "create-room", "join-room", "help", ...(isInSession ? ["session"] : [])].map((tab) => (
+                        {menuOpen && (
                             <div
-                            key={tab}
-                            onClick={() => handleNavClick(tab)}
-                            className={`flex justify-center items-center font-semibold text-md cursor-pointer w-full py-3 ${
-                                activeTab === tab ? "text-[#0663cc]" : "text-black"
-                            }`}
+                                className="absolute top-20.5 left-0 flex flex-col justify-center items-center bg-white p-4 shadow-md rounded w-full"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                             >
-                            {tab.replace("-", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                                {[
+                                    "home",
+                                    "create-room",
+                                    "join-room",
+                                    ...(isInSession ? ["session"] : []),
+                                    "help",
+                                ].map((tab) => (
+                                    <button
+                                        key={tab}
+                                        type="button"
+                                        onClick={() => handleNavClick(tab)}
+                                        onTouchStart={() => handleNavClick(tab)}
+                                        className={`flex justify-center items-center font-semibold text-md w-full py-3 ${
+                                            activeTab === tab ? "text-[#0663cc]" : "text-black"
+                                        }`}
+                                    >
+                                        {tab.replace("-", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                                    </button>
+                                ))}
                             </div>
-                            ))}
-                        </div>
-                    )}
+                        )}
+                    </div>
     
 
                     <div className = "md:flex justify-center items-center md:space-x-8 lg:space-x-12 hidden">
@@ -503,7 +843,13 @@ const Homepage = () => {
 
                 {activeTab === 'create-room' && (
                     <div className = "w-full flex flex-col justify-center items-center lg:-mt-20 -mt-3 md:mt-0 md:grow">
-                        <div className="md:w-full lg:max-w-lg md:max-w-md bg-white border border-gray-200 rounded-2xl shadow-sm px-8 py-10">
+                        <div
+                            className={`bg-white border border-gray-200 rounded-2xl shadow-sm px-8 py-10 ${
+                                roomCreated
+                                    ? 'w-[calc(100%-2rem)] max-w-md mx-4'
+                                    : 'md:w-full lg:max-w-lg md:max-w-md'
+                            }`}
+                        >
 
                             {!roomCreated ? (
                                 <>
@@ -639,12 +985,14 @@ const Homepage = () => {
                                 </>
                             )}
                         </div>
-                        <button
-                            onClick={handleCancel}
-                            className="text-sm text-gray-500 hover:text-gray-700 mt-4 transition-colors"
-                        >
-                            Cancel
-                        </button>
+                        {roomCreated && (
+                            <button
+                                onClick={handleCancel}
+                                className="text-sm text-gray-500 hover:text-gray-700 mt-4 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -887,6 +1235,32 @@ const Homepage = () => {
 
                         {/* Main Session Layout */}
                         <div className="flex flex-col lg:flex-row flex-1 w-full gap-4 p-2 md:p-4 min-h-0">
+                            {/* Mobile switcher (must be visible on both panes) */}
+                            <div className="lg:hidden bg-white border border-gray-200 rounded-lg shadow-sm p-2">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        onClick={() => setMobileSessionTab('editor')}
+                                        className={`py-2 rounded-lg text-sm font-semibold transition-all ${
+                                            mobileSessionTab === 'editor'
+                                                ? 'bg-[#0663cc] text-white'
+                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        Editor
+                                    </button>
+                                    <button
+                                        onClick={() => setMobileSessionTab('participants')}
+                                        className={`py-2 rounded-lg text-sm font-semibold transition-all ${
+                                            mobileSessionTab === 'participants'
+                                                ? 'bg-[#0663cc] text-white'
+                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        Participants
+                                    </button>
+                                </div>
+                            </div>
+
                             {/* Left Side - Room Details & Editor */}
                             <div className={`flex flex-col flex-1 gap-4 min-w-0 ${mobileSessionTab !== 'editor' ? 'hidden lg:flex' : ''}`}>
                                 {/* Room Details Panel */}
@@ -937,56 +1311,165 @@ const Homepage = () => {
                                     </div>
                                 </div>
 
-                                {/* Mobile switcher */}
-                                <div className="lg:hidden bg-white border border-gray-200 rounded-lg shadow-sm p-2">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            onClick={() => setMobileSessionTab('editor')}
-                                            className={`py-2 rounded-lg text-sm font-semibold transition-all ${
-                                                mobileSessionTab === 'editor'
-                                                    ? 'bg-[#0663cc] text-white'
-                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                            }`}
-                                        >
-                                            Editor
-                                        </button>
-                                        <button
-                                            onClick={() => setMobileSessionTab('participants')}
-                                            className={`py-2 rounded-lg text-sm font-semibold transition-all ${
-                                                mobileSessionTab === 'participants'
-                                                    ? 'bg-[#0663cc] text-white'
-                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                            }`}
-                                        >
-                                            Participants
-                                        </button>
-                                    </div>
-                                </div>
-
                                 {/* Live Editor */}
-                                <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-0">
-                                    <div className="flex items-center justify-between p-3 border-b border-gray-200">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                                            <span className="text-sm font-semibold text-gray-700">Live Editor</span>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className="text-sm text-gray-600 font-mono">{sessionTimer}</span>
-                                            <button
-                                                onClick={handleDownloadSession}
-                                                className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded transition-all"
-                                            >
-                                                Download
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <textarea
-                                        value={codeContent}
-                                        onChange={(e) => setCodeContent(e.target.value)}
-                                        className="flex-1 w-full p-4 font-mono text-sm border-none outline-none resize-none bg-gray-50"
-                                        placeholder="Start coding here... All participants will see changes in real-time."
-                                    />
+                                {/* Live Editor Container - Added margin 'm-2' to give a safe area to scroll the whole page on mobile */}
+<div className="lg:flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col h-[60vh] lg:h-[600px] overflow-hidden relative m-2 md:m-0">
+    
+    {/* Header */}
+    <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 shrink-0">
+        <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-semibold text-gray-700">Live Editor</span>
+        </div>
+        
+        <div className="flex items-center gap-2 md:gap-3">
+            <span className="text-xs md:text-sm text-gray-600 font-mono mr-1">{sessionTimer}</span>
+            
+            <button
+                onClick={runCode}
+                disabled={!['javascript', 'python', 'html'].includes(language)}
+                className={`px-3 py-1.5 text-white text-[10px] md:text-xs font-bold rounded flex items-center gap-1 shadow-sm transition-all ${
+                    ['javascript', 'python', 'html'].includes(language) 
+                    ? 'bg-green-600 hover:bg-green-700 shadow-green-100' 
+                    : 'bg-gray-300 cursor-not-allowed opacity-50'
+                }`}
+            >
+                <span>{language === 'html' ? '👁️' : '▶'}</span> Run
+            </button>
+
+            {/* Settings Toggle Button */}
+            <div className="relative">
+                <button
+                    onClick={() => setSettingsOpen(!settingsOpen)}
+                    className={`p-1.5 rounded border transition-all ${settingsOpen ? 'bg-blue-50 border-blue-300 text-blue-600 shadow-inner' : 'bg-white border-gray-300 text-gray-600'}`}
+                >
+                    <span className="text-xs">⚙️</span>
+                </button>
+
+                {settingsOpen && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-4 space-y-5 animate-in fade-in slide-in-from-top-2 duration-200">
+                        {/* Language Selection */}
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">
+                                Coding Language
+                            </label>
+                            <select 
+                                value={language}
+                                onChange={(e) => handleLanguageChange(e.target.value)}
+                                className="w-full text-xs border border-gray-200 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 font-bold text-gray-700"
+                            >
+                                <option value="javascript">JavaScript (Native)</option>
+                                <option value="python">Python (Pyodide)</option>
+                                <option value="html">HTML (Static)</option>
+                                <option value="css">CSS (Styles)</option>
+                                <option value="cpp">C++ (Highlight Only)</option>
+                            </select>
+                        </div>
+
+                        {/* Appearance Controls */}
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Appearance</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => setEditorTheme('vs-dark')} className={`text-[10px] py-2 rounded-lg font-bold border ${editorTheme === 'vs-dark' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-500 border-gray-200'}`}>Dark</button>
+                                <button onClick={() => setEditorTheme('light')} className={`text-[10px] py-2 rounded-lg font-bold border ${editorTheme === 'light' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}>Light</button>
+                            </div>
+                        </div>
+
+                        {/* Text Zoom */}
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Text Zoom</label>
+                            <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
+                                <button onClick={() => setFontSize(Math.max(12, fontSize - 2))} className="flex-1 py-2 bg-gray-50 hover:bg-gray-100 font-bold border-r border-gray-200 text-gray-600">−</button>
+                                <span className="flex-1 text-center text-[10px] font-bold text-gray-700">{fontSize}px</span>
+                                <button onClick={() => setFontSize(Math.min(24, fontSize + 2))} className="flex-1 py-2 bg-gray-50 hover:bg-gray-100 font-bold text-gray-600">+</button>
+                            </div>
+                        </div>
+
+                        {/* Tools Section */}
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-2">Tools</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={formatCode} className="text-[10px] py-2 bg-blue-50 text-blue-700 rounded-lg font-bold border border-blue-100 hover:bg-blue-100">✨ Format</button>
+                                    <button onClick={takeSnapshot} className="text-[10px] py-2 bg-purple-50 text-purple-700 rounded-lg font-bold border border-purple-100 hover:bg-purple-100">📸 Snapshot</button>
                                 </div>
+                            </div>
+
+                            {/* History List */}
+                            {snapshots.length > 0 && (
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-2">History</label>
+                                    <div className="max-h-24 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                                        {snapshots.map((s) => (
+                                            <button key={s.id} onClick={() => setCodeContent(s.content)} className="w-full text-left text-[9px] p-1.5 bg-gray-50 hover:bg-gray-100 rounded border border-gray-100 flex justify-between">
+                                                <span>Version</span> <span className="text-gray-400">{s.time}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    </div>
+
+    {/* Monaco Editor - Fixed for better page scrolling */}
+    <div className="flex-1 w-full relative min-h-0" onClick={() => setSettingsOpen(false)}> 
+    <Editor
+
+        onMount={(editor) => {
+    editorRef.current = editor;
+
+    // Monitor Selection (this includes cursor position + highlighted text)
+    editor.onDidChangeCursorSelection((e) => {
+        if (socket && roomId) {
+            socket.emit('cursor-move', {
+                roomId,
+                selection: e.selection, // Sends the full range
+                label: userName // Optional: Send name for the tooltip
+            });
+        }
+    });
+}}
+        
+        height="100%" 
+        language={language}
+        value={codeContent || ""} 
+        theme={editorTheme === 'vs-dark' ? 'vs-dark' : 'vs-light'}
+        /* Using our Mirror handler */
+        onChange={handleCodeChange}
+        options={{
+            minimap: { enabled: false },
+            fontSize: fontSize,
+            automaticLayout: true,
+            wordWrap: "on",
+            lineNumbers: "on",
+            cursorBlinking: "smooth",
+            scrollBeyondLastLine: false,
+            scrollbar: {
+                alwaysConsumeMouseWheel: false,
+                verticalScrollbarSize: 8,
+            },
+            fixedOverflowWidgets: true,
+            fontFamily: "'Fira Code', monospace",
+        }}
+    />
+</div>
+
+    {/* Console Output */}
+    {output && language !== 'html' && (
+        <div className="h-32 md:h-40 bg-[#0d0d0d] text-green-400 p-3 font-mono text-[11px] overflow-y-auto border-t border-gray-800 shadow-inner">
+            <div className="flex justify-between items-center text-gray-500 mb-2 border-b border-gray-800/50 pb-2">
+                <span className="text-[9px] font-bold uppercase tracking-[0.2em]">Console Terminal</span>
+                <button onClick={() => setOutput("")} className="hover:text-red-500 text-[10px] font-bold bg-gray-900 px-2 py-0.5 rounded border border-gray-800 transition-colors">CLEAR</button>
+            </div>
+            <div className="whitespace-pre-wrap leading-relaxed">{output}</div>
+        </div>
+    )}
+</div>
+
                             </div>
 
                             {/* Right Side - Participants Panel */}
@@ -1082,6 +1565,9 @@ const Homepage = () => {
                                             onTouchStart={() => setIsPushToTalk(true)}
                                             onTouchEnd={() => setIsPushToTalk(false)}
                                             onTouchCancel={() => setIsPushToTalk(false)}
+                                            onPointerDown={() => setIsPushToTalk(true)}
+                                            onPointerUp={() => setIsPushToTalk(false)}
+                                            onPointerCancel={() => setIsPushToTalk(false)}
                                             className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
                                                 isPushToTalk 
                                                     ? 'bg-[#0663cc] hover:bg-[#0552a8] text-white' 
