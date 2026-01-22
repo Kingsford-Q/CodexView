@@ -14,6 +14,15 @@ import img3 from './assets/img3.jpg';
 const Homepage = () => {
     const [activeTab, setActiveTab] = useState('home');
     const [menuOpen, setMenuOpen] = useState(false);
+    const [roomName, setRoomName] = useState("");
+    const [subject, setSubject] = useState("");
+    const [openIndex, setOpenIndex] = useState(null);
+    const [errors, setErrors] = useState({
+        roomName: "",
+        subject: "",
+    });
+
+
     const menuRef = useRef(null); 
 
     useEffect(() => {
@@ -29,7 +38,6 @@ const Homepage = () => {
         };
     }, []);
 
-    const [openIndex, setOpenIndex] = useState(null);
     const toggleIndex = (index) => {
     setOpenIndex(openIndex === index ? null : index);
     };
@@ -60,9 +68,38 @@ const Homepage = () => {
 
     const logo = "</>";
 
+    const handleSubmit = (e) => { e.preventDefault();
+
+        const newErrors = {
+            roomName: "",
+            subject: "",
+        };
+
+        if (!roomName.trim()) {
+            newErrors.roomName = "Room name is required";
+        }
+
+        if (!subject.trim()) {
+            newErrors.subject = "Subject is required";
+        }
+
+        setErrors(newErrors);
+
+        if (newErrors.roomName || newErrors.subject) return;
+
+        const roomId = crypto.randomUUID();
+
+        console.log({
+            roomName,
+            subject,
+            roomId,
+        });
+        };
+
+
     return(
-        <main className = "w-full">
-            <div className = "flex items-center lg:px-10 md:px-6 px-4 md:py-9 py-5 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.1)] w-full bg-white">
+        <main className = "w-full min-h-screen flex flex-col">
+            <div className = "sticky top-0 flex items-center lg:px-10 md:px-6 px-4 md:py-9 py-5 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.1)] w-full bg-white">
                 <nav className = 'flex justify-between items-center w-full'>
                     <div className = "flex justify-center items-center space-x-2">
                         <div className = "text-black font-bold md:text-3xl text-xl">{logo}</div>
@@ -122,7 +159,7 @@ const Homepage = () => {
                 </nav>
             </div>
 
-            <div className = "flex flex-col justify-center items-center w-full min-h-max pt-16 md:pt-32">
+            <div className = "grow flex flex-col items-center w-full pt-16 md:pt-28">
 
                 {activeTab === 'home' && (
                     <>
@@ -130,7 +167,7 @@ const Homepage = () => {
                             <div className = "flex flex-col justify-center items-center space-y-1">
                                 <div className = "font-bold md:text-2xl text-lg">Welcome to CodexView</div>
                                 <div className = "text-center px-4 md:px-0">A live coding space where creators teach and learners follow in real time.</div>
-                                <button className = "text-white bg-[#0663cc] rounded-full text-md px-4 py-2 mt-5 font-semibold shadow-[0_6px_16px_-8px_rgba(0,0,0,0.25)] hovershadow-[0_10px_24px_-10px_rgba(0,0,0,0.3)] transition-shadow duration-300"
+                                <button className = "text-white hover:bg-[#0552a8] bg-[#0663cc] rounded-full text-md px-4 py-2 mt-5 font-semibold shadow-[0_6px_16px_-8px_rgba(0,0,0,0.25)] hovershadow-[0_10px_24px_-10px_rgba(0,0,0,0.3)] transition-shadow duration-300"
                                 onClick = { () => setActiveTab('create-room') }
                                 > Create Room</button>
                             </div>
@@ -260,15 +297,107 @@ const Homepage = () => {
                                 </div>
                         </div>
 
-                        <footer className = "w-full pt-32 pb-8 flex justify-center items-center bg-[#f7f9fc] text-sm gap-1">
-                            <span className = 'text-lg'>&copy;</span>
-                            <span className = ''>CodexView 2026. All rights reserved.</span>
-                        </footer>
                     </>
                     
                 )}
 
-            </div>
+                {activeTab === 'create-room' && (
+                    <div className = "w-full flex justify-center items-center lg:-mt-20 -mt-3 md:mt-0 md:grow">
+                        <div className="md:w-full lg:max-w-lg md:max-w-md bg-white border border-gray-200 rounded-2xl shadow-sm px-8 py-10">
+
+                            {/* Header */}
+                            <div className="text-center md:mb-8 mb-6">
+                                <h2 className="text-md md:text-xl font-semibold">
+                                Create CodexView Room
+                                </h2>
+                                <p className="text-sm text-gray-600 mt-1">
+                                Start a live coding session in seconds
+                                </p>
+                            </div>
+
+                            <form className="space-y-6" onSubmit={handleSubmit}>
+
+                                {/* Room Name */}
+                                <div className="space-y-1.5">
+                                <label className="block text-sm font-medium text-gray-700 ml-1">
+                                    Room Name
+                                </label>
+
+                                <input
+                                    type="text"
+                                    value={roomName}
+                                    onChange={(e) => {
+                                    setRoomName(e.target.value);
+                                    setErrors((prev) => ({ ...prev, roomName: "" }));
+                                    }}
+                                    placeholder="Enter room name..."
+                                    className={`w-full px-5 py-3 border rounded-full text-sm transition-all
+                                    ${errors.roomName
+                                        ? "border-red-400 focus:ring-2 focus:ring-red-400"
+                                        : "border-gray-200 focus:ring-2 focus:ring-[#0663cc]"
+                                    }
+                                    focus:outline-none placeholder-gray-400`}
+                                />
+
+                                {errors.roomName && (
+                                    <p className="text-xs text-red-500 ml-2">
+                                    {errors.roomName}
+                                    </p>
+                                )}
+                                </div>
+
+                                {/* Subject */}
+                                <div className="space-y-1.5">
+                                <label className="block text-sm font-medium text-gray-700 ml-1">
+                                    Subject
+                                </label>
+
+                                <input
+                                    type="text"
+                                    value={subject}
+                                    onChange={(e) => {
+                                    setSubject(e.target.value);
+                                    setErrors((prev) => ({ ...prev, subject: "" }));
+                                    }}
+                                    placeholder="e.g. JavaScript, Python, Algorithms"
+                                    className={`w-full px-5 py-3 border rounded-full text-sm transition-all
+                                    ${errors.subject
+                                        ? "border-red-400 focus:ring-2 focus:ring-red-400"
+                                        : "border-gray-200 focus:ring-2 focus:ring-[#0663cc]"
+                                    }
+                                    focus:outline-none placeholder-gray-400`}
+                                />
+
+                                {errors.subject && (
+                                    <p className="text-xs text-red-500 ml-2">
+                                    {errors.subject}
+                                    </p>
+                                )}
+                                </div>
+
+                                {/* Submit */}
+                                <button
+                                type="submit"
+                                className="w-full bg-[#0663cc] hover:bg-[#0552a8]
+                                            text-white font-semibold py-3.5 rounded-full
+                                            shadow-[0_6px_16px_-8px_rgba(0,0,0,0.25)]
+                                            transition-all"
+                                >
+                                Create Room
+                                </button>
+
+                            </form>
+                        </div>
+
+                    </div>
+                )}
+
+            </div> 
+
+            <footer className = "w-full pt-12 md:pt-20 pb-8 flex justify-center items-center bg-[#f7f9fc] text-sm gap-1 mt-12">
+                <span className = 'text-lg'>&copy;</span>
+                <span className = ''>CodexView 2026. All rights reserved.</span>
+            </footer>
 
         </main>
         
