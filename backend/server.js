@@ -75,14 +75,17 @@ io.on('connection', (socket) => {
 
     // Joining a room
     socket.on('join-room', async (data) => {
-        const { roomId, userName } = data;
+        const { roomId, userName, wasHost } = data;
         try {
             let room = await Room.findOne({ roomId });
             if (!room) {
                 socket.emit('error', 'Room not found.');
                 return;
             }
-            const newParticipant = { socketId: socket.id, name: userName, isHost: false };
+            
+            // Check if user is rejoining as a host
+            const isHost = wasHost === true;
+            const newParticipant = { socketId: socket.id, name: userName, isHost };
             room.participants.push(newParticipant);
             await room.save();
             socket.join(roomId);

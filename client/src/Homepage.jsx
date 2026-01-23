@@ -99,13 +99,13 @@ const Homepage = () => {
             const savedSession = getSessionData('currentSession');
             if (savedSession) {
                 const { roomId, userName: savedUserName, isHost } = JSON.parse(savedSession);
-                console.log('Auto-rejoining room:', roomId);
+                console.log('Auto-rejoining room:', roomId, 'as', isHost ? 'host' : 'guest');
                 
-                // Both host and guest rejoin using join-room
-                // The room already exists on the backend
+                // Send both isHost flag so backend can restore host status
                 newSocket.emit('join-room', {
                     roomId,
-                    userName: savedUserName
+                    userName: savedUserName,
+                    wasHost: isHost
                 });
             }
         } catch (e) {
@@ -121,6 +121,21 @@ const Homepage = () => {
     newSocket.on('room-joined', (room) => {
         console.log('Joined room:', room);
         addNotification('Successfully joined the room!', 'success');
+        
+        // Check if this is an auto-rejoin (from sessionStorage)
+        const savedSession = getSessionData('currentSession');
+        if (savedSession) {
+            const { isHost } = JSON.parse(savedSession);
+            // Auto-rejoin detected - restore session view
+            setRoomId(room.roomId);
+            setRoomName(room.roomName);
+            setSubject(room.subject);
+            setIsInSession(true);
+            setIsHost(isHost);
+            setActiveTab('session');
+            setSessionStartTime(Date.now());
+            setMobileSessionTab('editor');
+        }
     });
 
     newSocket.on('participant-joined', ({ newParticipant }) => {
