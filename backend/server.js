@@ -129,6 +129,27 @@ io.on('connection', (socket) => {
         });
     });
 
+    // Audio chunk streaming
+    socket.on('audio-chunk', (data) => {
+        const { roomId, audioData, timestamp } = data;
+        // Broadcast audio to all other participants in the room
+        socket.to(roomId).emit('audio-stream', {
+            participantId: socket.id,
+            audioData: audioData,
+            timestamp: timestamp
+        });
+    });
+
+    // Speaker status updates
+    socket.on('speaker-status', (data) => {
+        const { roomId, isSpeaking } = data;
+        // Broadcast speaking status to all participants
+        io.to(roomId).emit('participant-speaking', {
+            participantId: socket.id,
+            isSpeaking: isSpeaking
+        });
+    });
+
     // Remove participant
     socket.on('remove-participant', async (data) => {
         const { roomId, socketId } = data;

@@ -198,6 +198,44 @@ const Homepage = () => {
         handleLeaveSession();
     });
 
+    newSocket.on('audio-stream', async ({ participantId, audioData }) => {
+        // Play audio from other participants
+        try {
+            if (!remoteAudioStreamsRef.current[participantId]) {
+                // Create audio element for this participant if it doesn't exist
+                const audio = new Audio();
+                audio.id = `audio-${participantId}`;
+                audio.volume = 0.5;
+                remoteAudioStreamsRef.current[participantId] = audio;
+            }
+            
+            // Convert base64 audio data back to blob and play
+            const binaryString = atob(audioData);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = remoteAudioStreamsRef.current[participantId];
+            audio.src = audioUrl;
+            
+            // Only play if not already playing and user is not muted
+            if (audio.paused) {
+                audio.play().catch(err => console.log('Could not autoplay audio:', err));
+            }
+        } catch (error) {
+            console.error('Error playing remote audio:', error);
+        }
+    });
+
+    newSocket.on('participant-speaking', ({ participantId, isSpeaking }) => {
+        // Update participant speaking state in UI
+        setParticipants(prev => prev.map(p => 
+            p.id === participantId ? { ...p, isSpeaking } : p
+        ));
+    });
+
     newSocket.on('code-mirrored', (content) => {
         if (isRemoteChange.current === false) {
             isRemoteChange.current = true;
@@ -262,6 +300,9 @@ const Homepage = () => {
     const menuRef = useRef(null);
     const micStreamRef = useRef(null);
     const micTrackRef = useRef(null);
+    const audioContextRef = useRef(null);
+    const audioProcessorRef = useRef(null);
+    const remoteAudioStreamsRef = useRef({}); // Store audio elements for each participant
     const editorTextareaRef = useRef(null);
     const [language, setLanguage] = useState("javascript");
     const [editorTheme, setEditorTheme] = useState("vs-dark"); // "vs-dark" or "light"
@@ -299,6 +340,45 @@ useEffect(() => {
 
     return () => socket.off('cursor-mirrored');
 }, [socket]);
+
+// Audio streaming setup
+useEffect(() => {
+    if (!socket || !isInSession || !micTrackRef.current) return;
+
+    let audioContext;
+    let mediaSource;
+    let processor;
+
+    const setupAudioProcessing = async () => {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(micStreamRef.current);
+            
+            // Create script processor for real-time audio processing
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+            audioProcessorRef.current = processor;
+            
+            let isSpeaking = false;
+            let silenceCounter = 0;
+            
+            processor.onaudioprocess = (event) => {
+                const inputData = event.inputBuffer.getChannelData(0);
+                
+                // Calculate RMS (root mean square) to detect voice activity
+                let sum = 0;
+                for (let i = 0; i < inputData.length; i++) {
+                    sum += inputData[i] * inputData[i];
+                }
+                const rms = Math.sqrt(sum / inputData.length);
+                
+                // Threshold for voice detection
+                const voiceThreshold = 0.02;
+                const currentlySpeaking = rms > voiceThreshold;
+                
+                // Send audio if not muted (or push-to-talk is active)
+                const shouldSendAudio = (!isMuted || isPushToTalk) && micTrackRef.current?.enabled;
+                
+                if (shouldSendAudio && currentlySpeaking) {\n                    // Convert audio data to WAV format and send\n                    const audioBlob = new Blob([inputData], { type: 'audio/wav' });\n                    const reader = new FileReader();\n                    reader.onload = () => {\n                        const base64Audio = reader.result.split(',')[1];\n                        socket.emit('audio-chunk', {\n                            roomId,\n                            audioData: base64Audio,\n                            timestamp: Date.now()\n                        });\n                    };\n                    reader.readAsDataURL(audioBlob);\n                    \n                    if (!isSpeaking) {\n                        isSpeaking = true;\n                        socket.emit('speaker-status', { roomId, isSpeaking: true });\n                    }\n                    silenceCounter = 0;\n                } else {\n                    silenceCounter++;\n                    if (isSpeaking && silenceCounter > 5) {\n                        isSpeaking = false;\n                        socket.emit('speaker-status', { roomId, isSpeaking: false });\n                    }\n                }\n            };\n            \n            source.connect(processor);\n            processor.connect(audioContext.destination);\n        } catch (error) {\n            console.error('Error setting up audio processing:', error);\n        }\n    };\n    \n    setupAudioProcessing();\n    \n    return () => {\n        if (processor) {\n            processor.disconnect();\n        }\n        if (audioContext) {\n            audioContext.close();\n        }\n    };\n}, [socket, isInSession, isMuted, isPushToTalk, roomId]);
 
 // 1. Format Code Logic
     const formatCode = () => {
