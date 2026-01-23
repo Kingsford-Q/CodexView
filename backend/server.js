@@ -49,6 +49,11 @@ app.use((req, res) => {
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
+    // Connection quality tracking
+    socket.on('ping', (data) => {
+        socket.emit('pong', data);
+    });
+
     // Room creation
     socket.on('create-room', async (data) => {
         const { roomId, roomName, subject, hostName } = data;

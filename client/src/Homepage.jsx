@@ -49,6 +49,10 @@ const Homepage = () => {
     const [joinRoomError, setJoinRoomError] = useState("");
     const [joinRoomName, setJoinRoomName] = useState("");
     const [userName, setUserName] = useState("Guest-" + Math.random().toString(36).substr(2, 9));
+    
+    // Session tracking
+    const [connectionQuality, setConnectionQuality] = useState('good'); // 'good' | 'fair' | 'poor'
+    const previousCodeRef = useRef(codeContent); // For code diff
 
     // Safe sessionStorage helper functions
     const getSessionData = (key) => {
@@ -234,6 +238,13 @@ const Homepage = () => {
         setParticipants(prev => prev.map(p => 
             p.id === participantId ? { ...p, isSpeaking } : p
         ));
+        
+        // Play sound when someone starts or stops speaking
+        if (isSpeaking) {
+            playNotificationSound('success');
+        } else {
+            playNotificationSound('error');
+        }
     });
 
     newSocket.on('code-mirrored', (content) => {
@@ -258,10 +269,31 @@ const Homepage = () => {
 
     newSocket.on('disconnect', () => {
         console.log('Disconnected from backend');
+        setConnectionQuality('poor');
         addNotification('Disconnected from server', 'error');
     });
 
-    return () => newSocket.close();
+    // Track connection quality
+    let pingInterval = setInterval(() => {
+        const now = Date.now();
+        newSocket.emit('ping', { timestamp: now });
+        
+        newSocket.once('pong', ({ timestamp }) => {
+            const latency = Date.now() - timestamp;
+            if (latency < 50) {
+                setConnectionQuality('good');
+            } else if (latency < 150) {
+                setConnectionQuality('fair');
+            } else {
+                setConnectionQuality('poor');
+            }
+        });
+    }, 5000);
+
+    return () => {
+        clearInterval(pingInterval);
+        newSocket.close();
+    };
 }, []);
 
     // Handle invite link - auto-join room from URL parameter
@@ -378,7 +410,52 @@ useEffect(() => {
                 // Send audio if not muted (or push-to-talk is active)
                 const shouldSendAudio = (!isMuted || isPushToTalk) && micTrackRef.current?.enabled;
                 
-                if (shouldSendAudio && currentlySpeaking) {\n                    // Convert audio data to WAV format and send\n                    const audioBlob = new Blob([inputData], { type: 'audio/wav' });\n                    const reader = new FileReader();\n                    reader.onload = () => {\n                        const base64Audio = reader.result.split(',')[1];\n                        socket.emit('audio-chunk', {\n                            roomId,\n                            audioData: base64Audio,\n                            timestamp: Date.now()\n                        });\n                    };\n                    reader.readAsDataURL(audioBlob);\n                    \n                    if (!isSpeaking) {\n                        isSpeaking = true;\n                        socket.emit('speaker-status', { roomId, isSpeaking: true });\n                    }\n                    silenceCounter = 0;\n                } else {\n                    silenceCounter++;\n                    if (isSpeaking && silenceCounter > 5) {\n                        isSpeaking = false;\n                        socket.emit('speaker-status', { roomId, isSpeaking: false });\n                    }\n                }\n            };\n            \n            source.connect(processor);\n            processor.connect(audioContext.destination);\n        } catch (error) {\n            console.error('Error setting up audio processing:', error);\n        }\n    };\n    \n    setupAudioProcessing();\n    \n    return () => {\n        if (processor) {\n            processor.disconnect();\n        }\n        if (audioContext) {\n            audioContext.close();\n        }\n    };\n}, [socket, isInSession, isMuted, isPushToTalk, roomId]);
+                if (shouldSendAudio && currentlySpeaking) {
+                    // Convert audio data to WAV format and send
+                    const audioBlob = new Blob([inputData], { type: 'audio/wav' });
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const base64Audio = reader.result.split(',')[1];
+                        socket.emit('audio-chunk', {
+                            roomId,
+                            audioData: base64Audio,
+                            timestamp: Date.now()
+                        });
+                    };
+                    reader.readAsDataURL(audioBlob);
+                    
+                    if (!isSpeaking) {
+                        isSpeaking = true;
+                        socket.emit('speaker-status', { roomId, isSpeaking: true });
+                    }
+                    silenceCounter = 0;
+                } else {
+                    silenceCounter++;
+                    if (isSpeaking && silenceCounter > 5) {
+                        isSpeaking = false;
+                        socket.emit('speaker-status', { roomId, isSpeaking: false });
+                    }
+                }
+            };
+            
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+        } catch (error) {
+            console.error('Error setting up audio processing:', error);
+        }
+    };
+    
+    setupAudioProcessing();
+    
+    return () => {
+        if (processor) {
+            processor.disconnect();
+        }
+        if (audioContext) {
+            audioContext.close();
+        }
+    };
+}, [socket, isInSession, isMuted, isPushToTalk, roomId]);
 
 // 1. Format Code Logic
     const formatCode = () => {
@@ -416,10 +493,11 @@ const handleCodeChange = (value) => {
     }
     const newContent = value || "";
     
-    // 1. Update local state immediately for zero-latency typing
+    // Update local state immediately for zero-latency typing
     setCodeContent(newContent);
+    previousCodeRef.current = newContent;
 
-    // 2. Broadcast the change to all other mirrors in the room
+    // Broadcast the change to all other mirrors in the room
     if (socket && roomId) {
         socket.emit('code-update', {
             roomId,
@@ -740,9 +818,37 @@ useEffect(() => {
     const addNotification = (message, type = 'info') => {
         const notification = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, notification]);
+        
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== notification.id));
         }, 3000);
+    };
+
+    const playNotificationSound = (type) => {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'success') {
+                oscillator.frequency.value = 800; // Higher pitch for success
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'error') {
+                oscillator.frequency.value = 400; // Lower pitch for error
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        } catch (error) {
+            // Silently fail if audio context not available
+        }
     };
 
     const generateRoomId = () => {
@@ -802,12 +908,45 @@ useEffect(() => {
         setParticipants(prev => prev.filter(p => p.id !== participantId));
     };
 
+    const getFileExtension = () => {
+        const extensionMap = {
+            javascript: 'js',
+            python: 'py',
+            html: 'html',
+            css: 'css',
+            cpp: 'cpp',
+            java: 'java',
+            csharp: 'cs',
+            ruby: 'rb',
+            go: 'go',
+            rust: 'rs',
+        };
+        return extensionMap[language] || 'txt';
+    };
+
+    const handleDownloadCode = () => {
+        const extension = getFileExtension();
+        const filename = `${roomName || 'untitled'}-${roomId.slice(0, 8)}.${extension}`;
+        const blob = new Blob([codeContent], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        addNotification(`Downloaded ${filename}`, 'success');
+    };
+
     const handleDownloadSession = () => {
         const sessionData = {
             roomName,
             roomId,
             subject,
+            language,
             codeContent,
+            codeHistory: codeHistory,
             participants: participants.map(p => ({ name: p.name, isHost: p.isHost })),
             duration: sessionTimer,
             timestamp: new Date().toISOString()
@@ -822,6 +961,7 @@ useEffect(() => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        addNotification('Session data downloaded', 'success');
     };
 
     const handleJoinRoom = (e) => {
@@ -1604,7 +1744,17 @@ useEffect(() => {
                                                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                         }`}
                                     >
-                                        Participants
+                                        Users
+                                    </button>
+                                    <button
+                                        onClick={() => setMobileSessionTab('history')}
+                                        className={`py-2 rounded-lg text-sm font-semibold transition-all ${
+                                            mobileSessionTab === 'history'
+                                                ? 'bg-[#0663cc] text-white'
+                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        Changes
                                     </button>
                                 </div>
                             </div>
@@ -1624,7 +1774,7 @@ useEffect(() => {
                                                 </div>
                                                 <div className="flex items-center gap-2 shrink-0">
                                                     <span className="text-gray-500">Host:</span>
-                                                    <span className="font-semibold truncate">{participants.find(p => p.isHost)?.name || 'Unknown'}</span>
+                                                    <span className="font-semibold">Host</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 shrink-0">
                                                     <span className="text-gray-500">Participants:</span>
@@ -1666,12 +1816,26 @@ useEffect(() => {
     {/* Header */}
     <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 shrink-0">
         <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            <div className={`w-2 h-2 rounded-full animate-pulse ${
+                connectionQuality === 'good' ? 'bg-green-500' :
+                connectionQuality === 'fair' ? 'bg-yellow-500' :
+                'bg-red-500'
+            }`}></div>
             <span className="text-sm font-semibold text-gray-700">Live Editor</span>
+            {!isHost && (
+                <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-semibold">Read-only</span>
+            )}
         </div>
         
         <div className="flex items-center gap-2 md:gap-3">
             <span className="text-xs md:text-sm text-gray-600 font-mono mr-1">{sessionTimer}</span>
+            <span className={`text-xs px-2 py-1 rounded font-semibold ${
+                connectionQuality === 'good' ? 'bg-green-100 text-green-700' :
+                connectionQuality === 'fair' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
+            }`}>
+                {connectionQuality === 'good' ? 'Good' : connectionQuality === 'fair' ? 'Fair' : 'Poor'}
+            </span>
             
             <button
                 onClick={runCode}
@@ -1744,9 +1908,10 @@ useEffect(() => {
                         <div className="space-y-4">
                             <div>
                                 <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-2">Tools</label>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-3 gap-2">
                                     <button onClick={formatCode} className="text-[10px] py-2 bg-blue-50 text-blue-700 rounded-lg font-bold border border-blue-100 hover:bg-blue-100">✨ Format</button>
-                                    <button onClick={takeSnapshot} className="text-[10px] py-2 bg-purple-50 text-purple-700 rounded-lg font-bold border border-purple-100 hover:bg-purple-100">📸 Snapshot</button>
+                                    <button onClick={takeSnapshot} className="text-[10px] py-2 bg-purple-50 text-purple-700 rounded-lg font-bold border border-purple-100 hover:bg-purple-100">📸 Snap</button>
+                                    <button onClick={handleDownloadCode} className="text-[10px] py-2 bg-green-50 text-green-700 rounded-lg font-bold border border-green-100 hover:bg-green-100">⬇️ Code</button>
                                 </div>
                             </div>
 
