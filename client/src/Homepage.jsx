@@ -192,6 +192,12 @@ const Homepage = () => {
         handleLeaveSession();
     });
 
+    newSocket.on('session-ended', ({ reason }) => {
+        console.log('Session ended by host');
+        addNotification('The session has ended', 'error');
+        handleLeaveSession();
+    });
+
     newSocket.on('code-mirrored', (content) => {
         if (isRemoteChange.current === false) {
             isRemoteChange.current = true;
@@ -202,7 +208,14 @@ const Homepage = () => {
     newSocket.on('error', (message) => {
         console.error('Socket error:', message);
         const errorMsg = typeof message === 'object' ? (message.message || JSON.stringify(message)) : String(message);
-        addNotification(errorMsg, 'error');
+        
+        // Handle specific errors
+        if (errorMsg.includes('Room not found')) {
+            setJoinRoomError('This session has expired or does not exist');
+            addNotification('Session expired or not found', 'error');
+        } else {
+            addNotification(errorMsg, 'error');
+        }
     });
 
     newSocket.on('disconnect', () => {
@@ -212,6 +225,36 @@ const Homepage = () => {
 
     return () => newSocket.close();
 }, []);
+
+    // Handle invite link - auto-join room from URL parameter
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const roomFromUrl = params.get('room');
+        
+        if (roomFromUrl && socket && !isInSession) {
+            // Set the room key and show join room tab
+            setJoinRoomKey(roomFromUrl);
+            setActiveTab('join-room');
+            addNotification('Room ID detected from invite link', 'info');
+            
+            // Auto-join after a short delay to ensure socket is ready
+            const timer = setTimeout(() => {
+                socket.emit('join-room', {
+                    roomId: roomFromUrl,
+                    userName: userName
+                });
+                
+                // Save session to sessionStorage
+                setSessionData('currentSession', JSON.stringify({
+                    roomId: roomFromUrl,
+                    userName: userName,
+                    isHost: false
+                }));
+            }, 500);
+            
+            return () => clearTimeout(timer);
+        }
+    }, [socket, isInSession]);
 
     // Mobile session UI state
     const [mobileSessionTab, setMobileSessionTab] = useState('editor'); // 'editor' | 'participants'
@@ -1441,7 +1484,7 @@ useEffect(() => {
                 )}
 
                 {activeTab === 'session' && isInSession && (
-                    <div className="w-full flex-1 flex flex-col min-h-0">
+                    <div className="w-full flex-1 flex flex-col min-h-0 overflow-x-hidden">
                         {/* Notifications */}
                         <div className="fixed top-20 right-4 left-4 md:left-auto z-50 space-y-2">
                             {notifications.map(notification => (
@@ -1491,19 +1534,19 @@ useEffect(() => {
                                 {/* Room Details Panel */}
                                 <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
                                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                                        <div className="flex-1">
-                                            <h3 className="text-lg font-semibold text-gray-900">{roomName}</h3>
-                                            <p className="text-sm text-gray-600 mt-1">{subject}</p>
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="text-lg font-semibold text-gray-900 wrap-break-word">{roomName}</h3>
+                                            <p className="text-sm text-gray-600 mt-1 wrap-break-word">{subject}</p>
                                             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-2 text-sm">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-gray-500">Room ID:</span>
-                                                    <span className="font-mono font-semibold">{roomId}</span>
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="text-gray-500 shrink-0">Room ID:</span>
+                                                    <span className="font-mono font-semibold truncate">{roomId}</span>
                                                 </div>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 shrink-0">
                                                     <span className="text-gray-500">Host:</span>
-                                                    <span className="font-semibold">{participants.find(p => p.isHost)?.name || 'Unknown'}</span>
+                                                    <span className="font-semibold truncate">{participants.find(p => p.isHost)?.name || 'Unknown'}</span>
                                                 </div>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 shrink-0">
                                                     <span className="text-gray-500">Participants:</span>
                                                     <span className="font-semibold">{participants.length}</span>
                                                 </div>

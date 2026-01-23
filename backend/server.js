@@ -158,11 +158,20 @@ io.on('connection', (socket) => {
             if (room) {
                 const participant = room.participants.find(p => p.socketId === socket.id);
                 const participantName = participant?.name || 'Unknown';
-                room.participants = room.participants.filter(p => p.socketId !== socket.id);
-                await room.save();
+                const isHost = participant?.isHost;
                 
-                // Notify all users in room about departure
-                io.to(roomId).emit('participant-left', { room, participantName });
+                room.participants = room.participants.filter(p => p.socketId !== socket.id);
+                
+                // If host is leaving, end the entire session by deleting the room
+                if (isHost) {
+                    await Room.deleteOne({ roomId });
+                    // Notify all room members that session has ended
+                    io.to(roomId).emit('session-ended', { reason: 'Host ended the session' });
+                } else {
+                    // Regular participant leaving
+                    await room.save();
+                    io.to(roomId).emit('participant-left', { room, participantName });
+                }
                 
                 // Remove socket from room
                 socket.leave(roomId);
