@@ -284,6 +284,9 @@ useEffect(() => {
 };
 
 const handleCodeChange = (value) => {
+    // Only hosts can edit - participants get read-only editor
+    if (!isHost) return;
+    
     if (isRemoteChange.current) {
         isRemoteChange.current = false; // Reset and ignore emitting
         return;
@@ -303,6 +306,9 @@ const handleCodeChange = (value) => {
 };
 
 const handleLanguageChange = (newLanguage) => {
+    // Only hosts can change language for the whole room
+    if (!isHost) return;
+    
     setLanguage(newLanguage);
     if (socket && roomId && isInSession) {
         socket.emit('language-change', {
@@ -1567,23 +1573,30 @@ useEffect(() => {
 
                 {settingsOpen && (
                     <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-4 space-y-5 animate-in fade-in slide-in-from-top-2 duration-200">
-                        {/* Language Selection */}
-                        <div>
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">
-                                Coding Language
-                            </label>
-                            <select 
-                                value={language}
-                                onChange={(e) => handleLanguageChange(e.target.value)}
-                                className="w-full text-xs border border-gray-200 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 font-bold text-gray-700"
-                            >
-                                <option value="javascript">JavaScript (Native)</option>
-                                <option value="python">Python (Pyodide)</option>
-                                <option value="html">HTML (Static)</option>
-                                <option value="css">CSS (Styles)</option>
-                                <option value="cpp">C++ (Highlight Only)</option>
-                            </select>
-                        </div>
+                        {/* Language Selection - Host Only */}
+                        {isHost && (
+                            <div>
+                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">
+                                    Coding Language
+                                </label>
+                                <select 
+                                    value={language}
+                                    onChange={(e) => handleLanguageChange(e.target.value)}
+                                    className="w-full text-xs border border-gray-200 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 font-bold text-gray-700"
+                                >
+                                    <option value="javascript">JavaScript (Native)</option>
+                                    <option value="python">Python (Pyodide)</option>
+                                    <option value="html">HTML (Static)</option>
+                                    <option value="css">CSS (Styles)</option>
+                                    <option value="cpp">C++ (Highlight Only)</option>
+                                </select>
+                            </div>
+                        )}
+                        {!isHost && (
+                            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <p className="text-[10px] text-blue-700 font-semibold">Language changes are controlled by the host</p>
+                            </div>
+                        )}
 
                         {/* Appearance Controls */}
                         <div>
@@ -1673,6 +1686,7 @@ useEffect(() => {
             },
             fixedOverflowWidgets: true,
             fontFamily: "'Fira Code', monospace",
+            readOnly: !isHost, // Only hosts can edit
         }}
     />
 </div>
