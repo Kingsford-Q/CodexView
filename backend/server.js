@@ -9,14 +9,22 @@ import Room from './models/Room.js';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST'],
+    credentials: false
+}));
 
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: '*', // Allow all origins for simplicity
+        origin: '*',
         methods: ['GET', 'POST'],
+        credentials: false
     },
+    transports: ['polling', 'websocket'],
+    pingInterval: 25000,
+    pingTimeout: 60000,
 });
 
 connectDB();

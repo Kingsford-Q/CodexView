@@ -48,11 +48,117 @@ const Homepage = () => {
     const [joinRoomKey, setJoinRoomKey] = useState("");
     const [joinRoomError, setJoinRoomError] = useState("");
     const [joinRoomName, setJoinRoomName] = useState("");
+    const [userName, setUserName] = useState("Guest-" + Math.random().toString(36).substr(2, 9));
+
+    // Safe sessionStorage helper functions
+    const getSessionData = (key) => {
+        try {
+            return sessionStorage.getItem(key);
+        } catch (e) {
+            console.warn('SessionStorage access blocked:', e);
+            return null;
+        }
+    };
+
+    const setSessionData = (key, value) => {
+        try {
+            sessionStorage.setItem(key, value);
+        } catch (e) {
+            console.warn('SessionStorage write blocked:', e);
+        }
+    };
+
+    const removeSessionData = (key) => {
+        try {
+            sessionStorage.removeItem(key);
+        } catch (e) {
+            console.warn('SessionStorage remove blocked:', e);
+        }
+    };
 
     useEffect(() => {
     // Replace with your backend URL
-    const newSocket = io("http://localhost:5000"); 
+    const newSocket = io("https://codexview.onrender.com", {
+        transports: ['polling', 'websocket'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 10,
+        secure: true,
+        rejectUnauthorized: false,
+        forceNew: false
+    }); 
     setSocket(newSocket);
+
+    newSocket.on('connect', () => {
+        console.log('Connected to backend');
+        addNotification('Connected to server', 'success');
+        
+        // Auto-rejoin room if user was in a session
+        try {
+            const savedSession = getSessionData('currentSession');
+            if (savedSession) {
+                const { roomId, userName: savedUserName, isHost } = JSON.parse(savedSession);
+                console.log('Auto-rejoining room:', roomId);
+                
+                // Both host and guest rejoin using join-room
+                // The room already exists on the backend
+                newSocket.emit('join-room', {
+                    roomId,
+                    userName: savedUserName
+                });
+            }
+        } catch (e) {
+            console.error('Error auto-rejoining room:', e);
+        }
+    });
+
+    newSocket.on('room-created', (room) => {
+        console.log('Room created:', room);
+        addNotification('Room created successfully!', 'success');
+    });
+
+    newSocket.on('room-joined', (room) => {
+        console.log('Joined room:', room);
+        addNotification('Successfully joined the room!', 'success');
+    });
+
+    newSocket.on('participant-joined', ({ newParticipant }) => {
+        console.log('New participant:', newParticipant);
+        addNotification(`${newParticipant.name} joined the session`, 'info');
+        setParticipants(prev => [...prev, { 
+            id: newParticipant.socketId, 
+            name: newParticipant.name, 
+            isHost: newParticipant.isHost, 
+            isOnline: true, 
+            isMuted: false, 
+            isSpeaking: false 
+        }]);
+    });
+
+    newSocket.on('participant-left', ({ participantName }) => {
+        console.log('Participant left:', participantName);
+        addNotification(`${participantName} left the session`, 'info');
+        setParticipants(prev => prev.filter(p => p.name !== participantName));
+    });
+
+    newSocket.on('code-mirrored', (content) => {
+        if (isRemoteChange.current === false) {
+            isRemoteChange.current = true;
+            setCodeContent(content);
+        }
+    });
+
+    newSocket.on('error', (message) => {
+        console.error('Socket error:', message);
+        const errorMsg = typeof message === 'object' ? (message.message || JSON.stringify(message)) : String(message);
+        addNotification(errorMsg, 'error');
+    });
+
+    newSocket.on('disconnect', () => {
+        console.log('Disconnected from backend');
+        addNotification('Disconnected from server', 'error');
+    });
 
     return () => newSocket.close();
 }, []);
@@ -142,6 +248,16 @@ const handleCodeChange = (value) => {
         socket.emit('code-update', {
             roomId,
             content: newContent
+        });
+    }
+};
+
+const handleLanguageChange = (newLanguage) => {
+    setLanguage(newLanguage);
+    if (socket && roomId && isInSession) {
+        socket.emit('language-change', {
+            roomId,
+            language: newLanguage
         });
     }
 };
@@ -327,10 +443,19 @@ useEffect(() => {
         try {
             const newRoomId = generateRoomId();
             setRoomId(newRoomId);
+            
+            if (socket) {
+                socket.emit('create-room', {
+                    roomId: newRoomId,
+                    roomName,
+                    subject,
+                    hostName: userName
+                });
+            }
+            
             setRoomCreated(true);
-            addNotification('Room created successfully!', 'success');
         } catch {
-            addNotification('Failed to create room on this device. Please try again.', 'error');
+            addNotification('Failed to create room. Please try again.', 'error');
         }
     };
 
@@ -352,6 +477,16 @@ useEffect(() => {
         setSessionStartTime(Date.now());
         setIsHost(true);
         setMobileSessionTab('editor');
+        
+        // Save session to sessionStorage for auto-rejoin on refresh
+        setSessionData('currentSession', JSON.stringify({
+            roomId,
+            userName,
+            isHost: true
+        }));
+        setSessionData('roomName', roomName);
+        setSessionData('subject', subject);
+        
         // Add initial notification
         addNotification('Session started successfully!', 'success');
         ensureMic().then((ok) => {
@@ -372,6 +507,11 @@ useEffect(() => {
         setIsMuted(false);
         setIsPushToTalk(false);
         
+        // Clear session from sessionStorage
+        removeSessionData('currentSession');
+        removeSessionData('roomName');
+        removeSessionData('subject');
+        
         // Reset create room form
         setRoomName("");
         setSubject("");
@@ -389,6 +529,11 @@ useEffect(() => {
         setSessionTimer('00:00:00');
         setNotifications([]);
         setOutput("");
+        
+        // Clear session from sessionStorage
+        removeSessionData('currentSession');
+        removeSessionData('roomName');
+        removeSessionData('subject');
     };
 
     const addNotification = (message, type = 'info') => {
@@ -479,32 +624,40 @@ useEffect(() => {
             return;
         }
 
-        // Check if room key is valid (in a real app, this would check with a backend)
-        // For now, we'll simulate joining a room
-        // In production, you'd validate the room key and fetch room details
-        
-        // Simulate successful join
-        setIsInSession(true);
-        setIsHost(false);
-        setRoomId(joinRoomKey);
-        setRoomName(joinRoomName || "Joined Room");
-        setSubject("Live Coding Session");
-        setActiveTab('session');
-        setSessionStartTime(Date.now());
-        setMobileSessionTab('editor');
-        
-        // Add user as participant (non-host)
-        setParticipants([
-            { id: 'host-1', name: 'Host', isHost: true, isOnline: true, isMuted: false, isSpeaking: false },
-            { id: '2', name: 'You', isHost: false, isOnline: true, isMuted: false, isSpeaking: false }
-        ]);
-        
-        addNotification('Successfully joined the room!', 'success');
-        ensureMic().then((ok) => {
-            if (!ok) addNotification('Microphone permission not granted (voice controls will be limited)', 'info');
-        });
-        setJoinRoomKey("");
-        setJoinRoomName("");
+        if (socket) {
+            socket.emit('join-room', {
+                roomId: joinRoomKey,
+                userName: joinRoomName || userName
+            });
+            
+            setIsInSession(true);
+            setIsHost(false);
+            setRoomId(joinRoomKey);
+            setRoomName(joinRoomName || "Joined Room");
+            setSubject("Live Coding Session");
+            setActiveTab('session');
+            setSessionStartTime(Date.now());
+            setMobileSessionTab('editor');
+            
+            // Save session to sessionStorage for auto-rejoin on refresh
+            setSessionData('currentSession', JSON.stringify({
+                roomId: joinRoomKey,
+                userName: joinRoomName || userName,
+                isHost: false
+            }));
+            setSessionData('roomName', joinRoomName || "Joined Room");
+            setSessionData('subject', "Live Coding Session");
+            
+            addNotification('Successfully joined the room!', 'success');
+            ensureMic().then((ok) => {
+                if (!ok) addNotification('Microphone permission not granted', 'info');
+            });
+            setJoinRoomKey("");
+            setJoinRoomName("");
+        } else {
+            setJoinRoomError("Not connected to server");
+            addNotification('Not connected to server', 'error');
+        }
     };
 
     const handleCancel = () => {
