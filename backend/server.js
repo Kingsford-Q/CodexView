@@ -23,6 +23,21 @@ connectDB();
 
 const PORT = process.env.PORT || 5000;
 
+// Health check route for Render / browser
+app.get("/", (req, res) => {
+    res.send("CodexView API running");
+});
+
+app.get("/api/ping", (req, res) => {
+    res.json({ status: "OK", message: "MongoDB connected" });
+});
+
+app.use((req, res) => {
+    console.log("Unhandled route:", req.path);
+    res.status(404).send("Route not found");
+});
+
+
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
