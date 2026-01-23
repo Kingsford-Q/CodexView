@@ -122,6 +122,16 @@ const Homepage = () => {
         console.log('Joined room:', room);
         addNotification('Successfully joined the room!', 'success');
         
+        // Convert room participants to UI format
+        const roomParticipants = room.participants.map(p => ({
+            id: p.socketId,
+            name: p.name,
+            isHost: p.isHost,
+            isOnline: true,
+            isMuted: false,
+            isSpeaking: false
+        }));
+        
         // Check if this is an auto-rejoin (from sessionStorage)
         const savedSession = getSessionData('currentSession');
         if (savedSession) {
@@ -132,9 +142,28 @@ const Homepage = () => {
             setSubject(room.subject);
             setIsInSession(true);
             setIsHost(isHost);
+            setParticipants(roomParticipants);
             setActiveTab('session');
             setSessionStartTime(Date.now());
             setMobileSessionTab('editor');
+        } else {
+            // First time joining - set session state
+            const newJoinSession = getSessionData('currentSession');
+            if (newJoinSession) {
+                const { isHost } = JSON.parse(newJoinSession);
+                setRoomId(room.roomId);
+                setRoomName(room.roomName || "Joined Room");
+                setSubject(room.subject || "Live Coding Session");
+                setIsInSession(true);
+                setIsHost(isHost);
+                setParticipants(roomParticipants);
+                setActiveTab('session');
+                setSessionStartTime(Date.now());
+                setMobileSessionTab('editor');
+                ensureMic().then((ok) => {
+                    if (!ok) addNotification('Microphone permission not granted', 'info');
+                });
+            }
         }
     });
 
@@ -155,6 +184,12 @@ const Homepage = () => {
         console.log('Participant left:', participantName);
         addNotification(`${participantName} left the session`, 'info');
         setParticipants(prev => prev.filter(p => p.name !== participantName));
+    });
+
+    newSocket.on('you-were-removed', ({ reason }) => {
+        console.log('You were removed from the session');
+        addNotification('You have been removed from the session', 'error');
+        handleLeaveSession();
     });
 
     newSocket.on('code-mirrored', (content) => {
@@ -493,6 +528,16 @@ useEffect(() => {
         setIsHost(true);
         setMobileSessionTab('editor');
         
+        // Initialize participants with current user as host
+        setParticipants([{
+            id: 'self',
+            name: userName,
+            isHost: true,
+            isOnline: true,
+            isMuted: false,
+            isSpeaking: false
+        }]);
+        
         // Save session to sessionStorage for auto-rejoin on refresh
         setSessionData('currentSession', JSON.stringify({
             roomId,
@@ -511,6 +556,12 @@ useEffect(() => {
 
     const handleEndSession = () => {
         stopMic();
+        
+        // Notify backend that host is ending the session
+        if (socket && roomId) {
+            socket.emit('leave-room', { roomId });
+        }
+        
         setIsInSession(false);
         setActiveTab('home');
         setOutput("");
@@ -538,6 +589,12 @@ useEffect(() => {
 
     const handleLeaveSession = () => {
         stopMic();
+        
+        // Notify backend that user is leaving the room
+        if (socket && roomId) {
+            socket.emit('leave-room', { roomId });
+        }
+        
         setIsInSession(false);
         setActiveTab('home');
         setSessionStartTime(null);
@@ -578,7 +635,7 @@ useEffect(() => {
     };
 
     const handleCopyInviteLink = () => {
-        const inviteLink = `${window.location.origin}?room=${roomId}`;
+        const inviteLink = `https://codexview.vercel.app/?room=${roomId}`;
         copyToClipboard(inviteLink).then((ok) => {
             if (ok) {
                 setInviteLinkCopied(true);
@@ -604,6 +661,14 @@ useEffect(() => {
         const participant = participants.find(p => p.id === participantId);
         if (participant) {
             addNotification(`${participant.name} has been removed from the session`, 'info');
+            
+            // Emit remove event to backend
+            if (socket && roomId) {
+                socket.emit('remove-participant', {
+                    roomId,
+                    socketId: participantId
+                });
+            }
         }
         setParticipants(prev => prev.filter(p => p.id !== participantId));
     };
@@ -645,28 +710,14 @@ useEffect(() => {
                 userName: joinRoomName || userName
             });
             
-            setIsInSession(true);
-            setIsHost(false);
-            setRoomId(joinRoomKey);
-            setRoomName(joinRoomName || "Joined Room");
-            setSubject("Live Coding Session");
-            setActiveTab('session');
-            setSessionStartTime(Date.now());
-            setMobileSessionTab('editor');
-            
             // Save session to sessionStorage for auto-rejoin on refresh
             setSessionData('currentSession', JSON.stringify({
                 roomId: joinRoomKey,
                 userName: joinRoomName || userName,
                 isHost: false
             }));
-            setSessionData('roomName', joinRoomName || "Joined Room");
-            setSessionData('subject', "Live Coding Session");
             
-            addNotification('Successfully joined the room!', 'success');
-            ensureMic().then((ok) => {
-                if (!ok) addNotification('Microphone permission not granted', 'info');
-            });
+            // Clear form
             setJoinRoomKey("");
             setJoinRoomName("");
         } else {
@@ -1444,7 +1495,7 @@ useEffect(() => {
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-gray-500">Host:</span>
-                                                    <span className="font-semibold">You</span>
+                                                    <span className="font-semibold">{participants.find(p => p.isHost)?.name || 'Unknown'}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-gray-500">Participants:</span>
@@ -1672,11 +1723,8 @@ useEffect(() => {
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2">
                                                             <span className="font-semibold text-sm text-gray-900 truncate">
-                                                                {participant.name}
+                                                                {participant.isHost ? 'Host' : participant.name}
                                                             </span>
-                                                            {participant.isHost && (
-                                                                <span className="text-xs bg-[#0663cc] text-white px-2 py-0.5 rounded">Host</span>
-                                                            )}
                                                         </div>
                                                         <div className="flex items-center gap-2 mt-1">
                                                             {participant.isMuted ? (
@@ -1688,7 +1736,7 @@ useEffect(() => {
                                                     </div>
                                                 </div>
                                                 {isHost && !participant.isHost && (
-                                                    <div className="flex items-center gap-1 ml-2">
+                                                    <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                                                         <button
                                                             onClick={() => handleMuteParticipant(participant.id)}
                                                             className="p-1.5 hover:bg-gray-200 rounded transition-all"

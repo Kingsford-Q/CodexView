@@ -129,6 +129,49 @@ io.on('connection', (socket) => {
         });
     });
 
+    // Remove participant
+    socket.on('remove-participant', async (data) => {
+        const { roomId, socketId } = data;
+        try {
+            let room = await Room.findOne({ roomId });
+            if (room) {
+                const participant = room.participants.find(p => p.socketId === socketId);
+                room.participants = room.participants.filter(p => p.socketId !== socketId);
+                await room.save();
+                
+                // Notify the removed user
+                io.to(socketId).emit('you-were-removed', { reason: 'Removed by host' });
+                
+                // Notify all users in room about removal
+                io.to(roomId).emit('participant-left', { room, participantName: participant?.name });
+            }
+        } catch (error) {
+            console.error('Error removing participant:', error);
+        }
+    });
+
+    // User leaving room
+    socket.on('leave-room', async (data) => {
+        const { roomId } = data;
+        try {
+            let room = await Room.findOne({ roomId });
+            if (room) {
+                const participant = room.participants.find(p => p.socketId === socket.id);
+                const participantName = participant?.name || 'Unknown';
+                room.participants = room.participants.filter(p => p.socketId !== socket.id);
+                await room.save();
+                
+                // Notify all users in room about departure
+                io.to(roomId).emit('participant-left', { room, participantName });
+                
+                // Remove socket from room
+                socket.leave(roomId);
+            }
+        } catch (error) {
+            console.error('Error leaving room:', error);
+        }
+    });
+
     // Disconnect
     socket.on('disconnect', async () => {
         console.log(`Socket disconnected: ${socket.id}`);
