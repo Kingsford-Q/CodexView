@@ -208,11 +208,12 @@ io.on('connection', (socket) => {
                 
                 // If host is leaving, end the entire session by deleting the room
                 if (isHost) {
+                    // Notify all room members (including host) that session has ended BEFORE leaving
+                    io.in(roomId).emit('session-ended', { reason: 'Host ended the session' });
                     await Room.deleteOne({ roomId });
-                    // Notify all room members that session has ended
-                    io.to(roomId).emit('session-ended', { reason: 'Host ended the session' });
                 } else {
                     // Regular participant leaving
+                    room.participants = room.participants.filter(p => p.socketId !== socket.id);
                     await room.save();
                     io.to(roomId).emit('participant-left', { room, participantName, participantId: socket.id });
                     

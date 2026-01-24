@@ -95,6 +95,7 @@ const Homepage = () => {
 
     newSocket.on('connect', () => {
         console.log('Connected to backend');
+        currentSocketIdRef.current = newSocket.id;
         
         // Auto-rejoin room if user was in a session
         try {
@@ -185,22 +186,25 @@ const Homepage = () => {
 
     newSocket.on('participant-joined', ({ newParticipant }) => {
         console.log('New participant:', newParticipant);
+        // Don't notify for self (we get "Successfully joined" from room-joined)
+        const isSelf = newParticipant.socketId === newSocket.id;
+        const now = Date.now();
+        const { name: lastName, at: lastAt } = lastJoinedNotificationRef.current;
+        const isDuplicate = lastName === newParticipant.name && (now - lastAt) < 2500;
+        
+        if (!isSelf && !isDuplicate) {
+            lastJoinedNotificationRef.current = { name: newParticipant.name, at: now };
+            addNotification(`${newParticipant.name} joined the session`, 'info');
+        }
+        
         setParticipants(prev => {
-            // Check if participant already exists (by id or name) to prevent duplicates
-            const exists = prev.some(p => p.id === newParticipant.socketId || p.name === newParticipant.name);
+            // Check if participant already exists (by id) to prevent duplicates
+            const exists = prev.some(p => p.id === newParticipant.socketId);
             if (exists) {
                 console.log('Participant already exists, skipping duplicate');
                 return prev;
             }
-            // Don't notify for self (we get "Successfully joined" from room-joined)
-            const isSelf = newParticipant.socketId === newSocket.id;
-            const now = Date.now();
-            const { name: lastName, at: lastAt } = lastJoinedNotificationRef.current;
-            const isDuplicate = lastName === newParticipant.name && (now - lastAt) < 2500;
-            if (!isSelf && !isDuplicate) {
-                lastJoinedNotificationRef.current = { name: newParticipant.name, at: now };
-                addNotification(`${newParticipant.name} joined the session`, 'info');
-            }
+            // Always add the new participant
             return [...prev, { 
                 id: newParticipant.socketId, 
                 name: newParticipant.name, 
@@ -242,7 +246,10 @@ const Homepage = () => {
     newSocket.on('session-ended', ({ reason }) => {
         console.log('Session ended by host');
         addNotification('The session has ended', 'error');
-        handleLeaveSession();
+        // Use setTimeout to ensure state updates happen after the notification
+        setTimeout(() => {
+            handleLeaveSession();
+        }, 100);
     });
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
@@ -387,6 +394,7 @@ const Homepage = () => {
     const editorRef = useRef(null);
     const remoteCursorsRef = useRef({});
     const lastJoinedNotificationRef = useRef({ name: null, at: 0 });
+    const currentSocketIdRef = useRef(null);
 
     // Example of syncing a peer's cursor
 
@@ -841,21 +849,25 @@ useEffect(() => {
     };
 
     const handleEndSession = () => {
-        stopMic();
-        
         // Notify backend that host is ending the session
+        // The backend will emit 'session-ended' to everyone, including the host
+        // We'll handle cleanup in the 'session-ended' event handler
         if (socket && roomId) {
             socket.emit('leave-room', { roomId });
         }
+    };
+
+    const handleLeaveSession = () => {
+        stopMic();
         
         setIsInSession(false);
         setActiveTab('home');
-        setOutput("");
         setSessionStartTime(null);
         setSessionTimer('00:00:00');
         setCodeContent('// Welcome to CodexView Live Session\n// Start coding here...\n');
         setParticipants([{ id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSpeaking: false }]);
         setNotifications([]);
+        setOutput("");
         setIsMuted(false);
         setIsPushToTalk(false);
         
@@ -873,36 +885,13 @@ useEffect(() => {
         setErrors({ roomName: "", subject: "" });
     };
 
-    const handleLeaveSession = () => {
-        stopMic();
-        
-        // Notify backend that user is leaving the room
-        if (socket && roomId) {
-            socket.emit('leave-room', { roomId });
-        }
-        
-        setIsInSession(false);
-        setActiveTab('home');
-        setSessionStartTime(null);
-        setSessionTimer('00:00:00');
-        setNotifications([]);
-        setOutput("");
-        
-        // Clear session from sessionStorage
-        removeSessionData('currentSession');
-        removeSessionData('roomName');
-        removeSessionData('subject');
-    };
-
     const addNotification = (message, type = 'info') => {
         const notification = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, notification]);
         
-        const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
-        const duration = isMobile ? 400 : 600;
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== notification.id));
-        }, duration);
+        }, 5000);
     };
 
     const playNotificationSound = (type) => {
@@ -1055,15 +1044,21 @@ useEffect(() => {
         }
 
         if (socket) {
+            const actualUserName = joinRoomName || userName;
             socket.emit('join-room', {
                 roomId: joinRoomKey,
-                userName: joinRoomName || userName
+                userName: actualUserName
             });
+            
+            // Update userName to match what was actually sent
+            if (joinRoomName) {
+                setUserName(actualUserName);
+            }
             
             // Save session to sessionStorage for auto-rejoin on refresh
             setSessionData('currentSession', JSON.stringify({
                 roomId: joinRoomKey,
-                userName: joinRoomName || userName,
+                userName: actualUserName,
                 isHost: false
             }));
             
@@ -1889,9 +1884,7 @@ useEffect(() => {
         <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full animate-pulse bg-red-500"></div>
             <span className="text-sm font-semibold text-gray-700">Live Editor</span>
-            {!isHost && (
-                <span className="hidden md:inline text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-semibold">Read-only</span>
-            )}
+            
         </div>
         
         <div className="flex items-center gap-2 md:gap-3">
@@ -2087,8 +2080,8 @@ useEffect(() => {
                                                         <div className="flex items-center gap-2">
                                                             <span className="font-semibold text-sm text-gray-900 truncate">
                                                                 {participant.isHost ? 'Host' : participant.name}
-                                                                {((isHost && participant.isHost) || participant.name === userName) && (
-                                                                    <span className="font-semibold text-sm text-gray-900 truncate"> (You)</span>
+                                                                {((isHost && participant.isHost) || (participant.name === userName) || (participant.id === currentSocketIdRef.current)) && (
+                                                                    <span className="text-gray-500 font-normal"> (You)</span>
                                                                 )}
                                                             </span>
                                                         </div>
