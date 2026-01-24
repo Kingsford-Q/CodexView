@@ -1910,7 +1910,6 @@ useEffect(() => {
                                 </div>
 
                                 {/* Live Editor */}
-                                {/* Live Editor Container - Added margin 'm-2' to give a safe area to scroll the whole page on mobile */}
 <div className="lg:flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-[400px] h-[70vh] lg:min-h-[500px] lg:h-[75vh] overflow-hidden relative m-2 md:m-0 pt-2">
     
     {/* Header */}
@@ -1927,7 +1926,7 @@ useEffect(() => {
             <button
                 onClick={runCode}
                 disabled={!['javascript', 'python', 'html'].includes(language)}
-                className={`px-3 py-1.5 text-white text-[10px] md:text-xs font-bold rounded flex items-center gap-1 shadow-sm transition-all ${
+                className={`px-3 py-1.5 text-white text-[10px] md:text-xs h-8 font-bold rounded flex items-center gap-1 shadow-sm transition-all ${
                     ['javascript', 'python', 'html'].includes(language) 
                     ? 'bg-green-600 hover:bg-green-700 shadow-green-100' 
                     : 'bg-gray-300 cursor-not-allowed opacity-50'
@@ -1940,7 +1939,7 @@ useEffect(() => {
             <div className="relative">
                 <button
                     onClick={() => setSettingsOpen(!settingsOpen)}
-                    className={`p-1.5 rounded border transition-all ${settingsOpen ? 'bg-blue-50 border-blue-300 text-blue-600 shadow-inner' : 'bg-white border-gray-300 text-gray-600'}`}
+                    className={`flex items-center justify-center p-1.5 h-8 w-14 rounded border transition-all ${settingsOpen ? 'bg-blue-50 border-blue-300 text-blue-600 shadow-inner' : 'bg-white border-gray-300 text-gray-600'}`}
                 >
                     <span className="text-xs">⚙️</span>
                 </button>
