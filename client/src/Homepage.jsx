@@ -51,7 +51,6 @@ const Homepage = () => {
     const [userName, setUserName] = useState("Guest-" + Math.random().toString(36).substr(2, 9));
     
     // Session tracking
-    const [connectionQuality, setConnectionQuality] = useState('good'); // 'good' | 'fair' | 'poor'
     const previousCodeRef = useRef(codeContent); // For code diff
 
     // Safe sessionStorage helper functions
@@ -96,7 +95,6 @@ const Homepage = () => {
 
     newSocket.on('connect', () => {
         console.log('Connected to backend');
-        addNotification('Connected to server', 'success');
         
         // Auto-rejoin room if user was in a session
         try {
@@ -173,21 +171,44 @@ const Homepage = () => {
 
     newSocket.on('participant-joined', ({ newParticipant }) => {
         console.log('New participant:', newParticipant);
-        addNotification(`${newParticipant.name} joined the session`, 'info');
-        setParticipants(prev => [...prev, { 
-            id: newParticipant.socketId, 
-            name: newParticipant.name, 
-            isHost: newParticipant.isHost, 
-            isOnline: true, 
-            isMuted: false, 
-            isSpeaking: false 
-        }]);
+        setParticipants(prev => {
+            // Check if participant already exists (by id or name) to prevent duplicates
+            const exists = prev.some(p => p.id === newParticipant.socketId || p.name === newParticipant.name);
+            if (exists) {
+                console.log('Participant already exists, skipping duplicate');
+                return prev;
+            }
+            addNotification(`${newParticipant.name} joined the session`, 'info');
+            return [...prev, { 
+                id: newParticipant.socketId, 
+                name: newParticipant.name, 
+                isHost: newParticipant.isHost, 
+                isOnline: true, 
+                isMuted: false, 
+                isSpeaking: false 
+            }];
+        });
     });
 
-    newSocket.on('participant-left', ({ participantName }) => {
+    newSocket.on('participant-left', ({ participantName, participantId }) => {
         console.log('Participant left:', participantName);
         addNotification(`${participantName} left the session`, 'info');
-        setParticipants(prev => prev.filter(p => p.name !== participantName));
+        // Remove by both id and name to ensure cleanup
+        setParticipants(prev => prev.filter(p => p.name !== participantName && p.id !== participantId));
+    });
+
+    // Sync full participant list from server (useful after reconnection)
+    newSocket.on('sync-participants', ({ participants: serverParticipants }) => {
+        console.log('Syncing participants from server:', serverParticipants);
+        const formattedParticipants = serverParticipants.map(p => ({
+            id: p.socketId,
+            name: p.name,
+            isHost: p.isHost,
+            isOnline: true,
+            isMuted: false,
+            isSpeaking: false
+        }));
+        setParticipants(formattedParticipants);
     });
 
     newSocket.on('you-were-removed', ({ reason }) => {
@@ -269,29 +290,10 @@ const Homepage = () => {
 
     newSocket.on('disconnect', () => {
         console.log('Disconnected from backend');
-        setConnectionQuality('poor');
         addNotification('Disconnected from server', 'error');
     });
 
-    // Track connection quality
-    let pingInterval = setInterval(() => {
-        const now = Date.now();
-        newSocket.emit('ping', { timestamp: now });
-        
-        newSocket.once('pong', ({ timestamp }) => {
-            const latency = Date.now() - timestamp;
-            if (latency < 50) {
-                setConnectionQuality('good');
-            } else if (latency < 150) {
-                setConnectionQuality('fair');
-            } else {
-                setConnectionQuality('poor');
-            }
-        });
-    }, 5000);
-
     return () => {
-        clearInterval(pingInterval);
         newSocket.close();
     };
 }, []);
@@ -305,7 +307,6 @@ const Homepage = () => {
             // Set the room key and show join room tab
             setJoinRoomKey(roomFromUrl);
             setActiveTab('join-room');
-            addNotification('Room ID detected from invite link', 'info');
             
             // Auto-join after a short delay to ensure socket is ready
             const timer = setTimeout(() => {
@@ -460,6 +461,35 @@ useEffect(() => {
 // 1. Format Code Logic
     const formatCode = () => {
     try {
+        // Python formatting - basic indentation cleanup
+        if (language === 'python') {
+            // Simple Python formatter: normalize indentation to 4 spaces
+            const lines = codeContent.split('\n');
+            const formatted = lines.map(line => {
+                // Count leading whitespace
+                const match = line.match(/^(\s*)/);
+                if (match) {
+                    const leadingSpaces = match[1];
+                    // Convert tabs to 4 spaces and normalize
+                    const normalizedIndent = leadingSpaces.replace(/\t/g, '    ');
+                    // Calculate indent level (4 spaces per level)
+                    const indentLevel = Math.round(normalizedIndent.length / 4);
+                    const newIndent = '    '.repeat(indentLevel);
+                    return newIndent + line.trimStart();
+                }
+                return line;
+            }).join('\n');
+            setCodeContent(formatted);
+            addNotification('Python code formatted', 'success');
+            return;
+        }
+
+        // CSS formatting not supported
+        if (language === 'css' || language === 'cpp') {
+            addNotification(`Formatting not available for ${language.toUpperCase()}`, 'info');
+            return;
+        }
+
         if (!window.prettier) {
             alert("Prettier is still loading...");
             return;
@@ -821,7 +851,7 @@ useEffect(() => {
         
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== notification.id));
-        }, 3000);
+        }, 1500);
     };
 
     const playNotificationSound = (type) => {
@@ -1704,7 +1734,7 @@ useEffect(() => {
                 )}
 
                 {activeTab === 'session' && isInSession && (
-                    <div className="w-full flex-1 flex flex-col min-h-0 overflow-x-hidden">
+                    <div className="w-full flex flex-col">
                         {/* Notifications */}
                         <div className="fixed top-20 right-4 left-4 md:left-auto z-50 space-y-2">
                             {notifications.map(notification => (
@@ -1722,7 +1752,7 @@ useEffect(() => {
                         </div>
 
                         {/* Main Session Layout */}
-                        <div className="flex flex-col lg:flex-row flex-1 w-full gap-4 p-2 md:p-4 min-h-0">
+                        <div className="flex flex-col lg:flex-row lg:items-stretch w-full gap-4 p-2 md:p-4">
                             {/* Mobile switcher (must be visible on both panes) */}
                             <div className="lg:hidden bg-white border border-gray-200 rounded-lg shadow-sm p-2">
                                 <div className="grid grid-cols-2 gap-2">
@@ -1744,17 +1774,7 @@ useEffect(() => {
                                                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                         }`}
                                     >
-                                        Users
-                                    </button>
-                                    <button
-                                        onClick={() => setMobileSessionTab('history')}
-                                        className={`py-2 rounded-lg text-sm font-semibold transition-all ${
-                                            mobileSessionTab === 'history'
-                                                ? 'bg-[#0663cc] text-white'
-                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
-                                    >
-                                        Changes
+                                        Participants
                                     </button>
                                 </div>
                             </div>
@@ -1816,11 +1836,7 @@ useEffect(() => {
     {/* Header */}
     <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 shrink-0">
         <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full animate-pulse ${
-                connectionQuality === 'good' ? 'bg-green-500' :
-                connectionQuality === 'fair' ? 'bg-yellow-500' :
-                'bg-red-500'
-            }`}></div>
+            <div className="w-2 h-2 rounded-full animate-pulse bg-red-500"></div>
             <span className="text-sm font-semibold text-gray-700">Live Editor</span>
             {!isHost && (
                 <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-semibold">Read-only</span>
@@ -1829,13 +1845,6 @@ useEffect(() => {
         
         <div className="flex items-center gap-2 md:gap-3">
             <span className="text-xs md:text-sm text-gray-600 font-mono mr-1">{sessionTimer}</span>
-            <span className={`text-xs px-2 py-1 rounded font-semibold ${
-                connectionQuality === 'good' ? 'bg-green-100 text-green-700' :
-                connectionQuality === 'fair' ? 'bg-yellow-100 text-yellow-700' :
-                'bg-red-100 text-red-700'
-            }`}>
-                {connectionQuality === 'good' ? 'Good' : connectionQuality === 'fair' ? 'Fair' : 'Poor'}
-            </span>
             
             <button
                 onClick={runCode}
@@ -1994,7 +2003,7 @@ useEffect(() => {
                             </div>
 
                             {/* Right Side - Participants Panel */}
-                            <div className={`w-full lg:w-80 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-0 ${mobileSessionTab !== 'participants' ? 'hidden lg:flex' : ''}`}>
+                            <div className={`w-full lg:w-80 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col lg:self-stretch ${mobileSessionTab !== 'participants' ? 'hidden lg:flex' : ''}`}>
                                 <div className="p-4 border-b border-gray-200">
                                     <h3 className="text-lg font-semibold text-gray-900">Participants</h3>
                                     <p className="text-sm text-gray-600 mt-1">{participants.length} online</p>

@@ -88,6 +88,19 @@ io.on('connection', (socket) => {
                 return;
             }
             
+            // Check if user already exists in the room (by name) to prevent duplicates on reconnect
+            const existingParticipant = room.participants.find(p => p.name === userName);
+            if (existingParticipant) {
+                // Update existing participant's socket ID
+                existingParticipant.socketId = socket.id;
+                await room.save();
+                socket.join(roomId);
+                socket.emit('room-joined', room);
+                // Sync all participants to ensure everyone has correct list
+                io.to(roomId).emit('sync-participants', { participants: room.participants });
+                return;
+            }
+            
             // Check if user is rejoining as a host
             const isHost = wasHost === true;
             const newParticipant = { socketId: socket.id, name: userName, isHost };
@@ -96,6 +109,8 @@ io.on('connection', (socket) => {
             socket.join(roomId);
             io.to(roomId).emit('participant-joined', { room, newParticipant });
             socket.emit('room-joined', room);
+            // Sync all participants to ensure everyone has correct list
+            io.to(roomId).emit('sync-participants', { participants: room.participants });
         } catch (error) {
             console.error('Error joining room:', error);
             socket.emit('error', 'Could not join room.');
@@ -169,7 +184,10 @@ io.on('connection', (socket) => {
                 io.to(socketId).emit('you-were-removed', { reason: 'Removed by host' });
                 
                 // Notify all users in room about removal
-                io.to(roomId).emit('participant-left', { room, participantName: participant?.name });
+                io.to(roomId).emit('participant-left', { room, participantName: participant?.name, participantId: socketId });
+                
+                // Sync full participant list to all remaining users
+                io.to(roomId).emit('sync-participants', { participants: room.participants });
             }
         } catch (error) {
             console.error('Error removing participant:', error);
@@ -196,7 +214,10 @@ io.on('connection', (socket) => {
                 } else {
                     // Regular participant leaving
                     await room.save();
-                    io.to(roomId).emit('participant-left', { room, participantName });
+                    io.to(roomId).emit('participant-left', { room, participantName, participantId: socket.id });
+                    
+                    // Sync full participant list to all remaining users
+                    io.to(roomId).emit('sync-participants', { participants: room.participants });
                 }
                 
                 // Remove socket from room
@@ -216,7 +237,10 @@ io.on('connection', (socket) => {
                 const participant = room.participants.find(p => p.socketId === socket.id);
                 room.participants = room.participants.filter(p => p.socketId !== socket.id);
                 await room.save();
-                io.to(room.roomId).emit('participant-left', { room, participantName: participant.name });
+                io.to(room.roomId).emit('participant-left', { room, participantName: participant?.name, participantId: socket.id });
+                
+                // Sync full participant list to all remaining users
+                io.to(room.roomId).emit('sync-participants', { participants: room.participants });
             }
         } catch (error) {
             console.error('Error on disconnect:', error);
