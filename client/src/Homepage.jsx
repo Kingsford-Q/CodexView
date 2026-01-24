@@ -134,6 +134,20 @@ const Homepage = () => {
             isSpeaking: false
         }));
         
+        // Sync code content from room
+        if (room.codeContent) {
+            isRemoteChange.current = true;
+            setCodeContent(room.codeContent);
+            setTimeout(() => {
+                isRemoteChange.current = false;
+            }, 100);
+        }
+        
+        // Sync language from room
+        if (room.language) {
+            setLanguage(room.language);
+        }
+        
         // Check if this is an auto-rejoin (from sessionStorage)
         const savedSession = getSessionData('currentSession');
         if (savedSession) {
@@ -178,7 +192,15 @@ const Homepage = () => {
                 console.log('Participant already exists, skipping duplicate');
                 return prev;
             }
-            addNotification(`${newParticipant.name} joined the session`, 'info');
+            // Don't notify for self (we get "Successfully joined" from room-joined)
+            const isSelf = newParticipant.socketId === newSocket.id;
+            const now = Date.now();
+            const { name: lastName, at: lastAt } = lastJoinedNotificationRef.current;
+            const isDuplicate = lastName === newParticipant.name && (now - lastAt) < 2500;
+            if (!isSelf && !isDuplicate) {
+                lastJoinedNotificationRef.current = { name: newParticipant.name, at: now };
+                addNotification(`${newParticipant.name} joined the session`, 'info');
+            }
             return [...prev, { 
                 id: newParticipant.socketId, 
                 name: newParticipant.name, 
@@ -224,31 +246,46 @@ const Homepage = () => {
     });
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
-        // Play audio from other participants
+        // Play audio from other participants using Web Audio API for real-time playback
         try {
             if (!remoteAudioStreamsRef.current[participantId]) {
-                // Create audio element for this participant if it doesn't exist
-                const audio = new Audio();
-                audio.id = `audio-${participantId}`;
-                audio.volume = 0.5;
-                remoteAudioStreamsRef.current[participantId] = audio;
+                // Create audio context for this participant if it doesn't exist
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 0.5; // Set volume
+                gainNode.connect(audioContext.destination);
+                
+                remoteAudioStreamsRef.current[participantId] = {
+                    audioContext,
+                    gainNode
+                };
             }
             
-            // Convert base64 audio data back to blob and play
+            const audioSetup = remoteAudioStreamsRef.current[participantId];
+            
+            // Convert base64 back to Int16Array (PCM)
             const binaryString = atob(audioData);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
-            const blob = new Blob([bytes], { type: 'audio/wav' });
-            const audioUrl = URL.createObjectURL(blob);
-            const audio = remoteAudioStreamsRef.current[participantId];
-            audio.src = audioUrl;
+            const int16Array = new Int16Array(bytes.buffer);
             
-            // Only play if not already playing and user is not muted
-            if (audio.paused) {
-                audio.play().catch(err => console.log('Could not autoplay audio:', err));
+            // Convert Int16Array to Float32Array for Web Audio API
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
             }
+            
+            // Create audio buffer and play
+            const sampleRate = audioSetup.audioContext.sampleRate;
+            const audioBuffer = audioSetup.audioContext.createBuffer(1, float32Array.length, sampleRate);
+            audioBuffer.copyToChannel(float32Array, 0);
+            
+            const source = audioSetup.audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioSetup.gainNode);
+            source.start(0);
         } catch (error) {
             console.error('Error playing remote audio:', error);
         }
@@ -269,10 +306,16 @@ const Homepage = () => {
     });
 
     newSocket.on('code-mirrored', (content) => {
-        if (isRemoteChange.current === false) {
-            isRemoteChange.current = true;
-            setCodeContent(content);
-        }
+        // Set flag before updating to prevent emitting back to server
+        isRemoteChange.current = true;
+        setCodeContent(content);
+        // Reset flag after React has processed the update
+        // Use requestAnimationFrame to ensure it happens after the onChange handler
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                isRemoteChange.current = false;
+            }, 50);
+        });
     });
 
     newSocket.on('error', (message) => {
@@ -343,6 +386,7 @@ const Homepage = () => {
     const [snapshots, setSnapshots] = useState([]);
     const editorRef = useRef(null);
     const remoteCursorsRef = useRef({});
+    const lastJoinedNotificationRef = useRef({ name: null, at: 0 });
 
     // Example of syncing a peer's cursor
 
@@ -362,8 +406,7 @@ useEffect(() => {
                 range: new monaco.Range(line, column, line, column),
                 options: {
                     className: `remote-cursor-${participantId} remote-cursor-line`,
-                    hoverMessage: { value: participantName },
-                    beforeContentClassName: `remote-cursor-label-${participantId} remote-cursor-label-style`,
+                    // Removed hoverMessage and beforeContentClassName to hide the label
                 }
             }
         ]);
@@ -412,18 +455,24 @@ useEffect(() => {
                 const shouldSendAudio = (!isMuted || isPushToTalk) && micTrackRef.current?.enabled;
                 
                 if (shouldSendAudio && currentlySpeaking) {
-                    // Convert audio data to WAV format and send
-                    const audioBlob = new Blob([inputData], { type: 'audio/wav' });
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        const base64Audio = reader.result.split(',')[1];
-                        socket.emit('audio-chunk', {
-                            roomId,
-                            audioData: base64Audio,
-                            timestamp: Date.now()
-                        });
-                    };
-                    reader.readAsDataURL(audioBlob);
+                    // Convert Float32Array to Int16Array (PCM format) for transmission
+                    const pcmData = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        // Clamp and convert to 16-bit PCM
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    // Convert to base64 for transmission
+                    const bytes = new Uint8Array(pcmData.buffer);
+                    const binary = String.fromCharCode.apply(null, Array.from(bytes));
+                    const base64Audio = btoa(binary);
+                    
+                    socket.emit('audio-chunk', {
+                        roomId,
+                        audioData: base64Audio,
+                        timestamp: Date.now()
+                    });
                     
                     if (!isSpeaking) {
                         isSpeaking = true;
@@ -849,9 +898,11 @@ useEffect(() => {
         const notification = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, notification]);
         
+        const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+        const duration = isMobile ? 400 : 600;
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== notification.id));
-        }, 1500);
+        }, duration);
     };
 
     const playNotificationSound = (type) => {
@@ -1734,7 +1785,7 @@ useEffect(() => {
                 )}
 
                 {activeTab === 'session' && isInSession && (
-                    <div className="w-full flex flex-col">
+                    <div className="w-full flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
                         {/* Notifications */}
                         <div className="fixed top-20 right-4 left-4 md:left-auto z-50 space-y-2">
                             {notifications.map(notification => (
@@ -1752,7 +1803,7 @@ useEffect(() => {
                         </div>
 
                         {/* Main Session Layout */}
-                        <div className="flex flex-col lg:flex-row lg:items-stretch w-full gap-4 p-2 md:p-4">
+                        <div className="flex flex-col lg:flex-row lg:items-stretch flex-1 w-full gap-4 p-2 md:p-4 min-h-0">
                             {/* Mobile switcher (must be visible on both panes) */}
                             <div className="lg:hidden bg-white border border-gray-200 rounded-lg shadow-sm p-2">
                                 <div className="grid grid-cols-2 gap-2">
@@ -1831,7 +1882,7 @@ useEffect(() => {
 
                                 {/* Live Editor */}
                                 {/* Live Editor Container - Added margin 'm-2' to give a safe area to scroll the whole page on mobile */}
-<div className="lg:flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col h-[60vh] lg:h-[600px] overflow-hidden relative m-2 md:m-0">
+<div className="lg:flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-[400px] h-[70vh] lg:min-h-[500px] lg:h-[75vh] overflow-hidden relative m-2 md:m-0 pt-2">
     
     {/* Header */}
     <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 shrink-0">
@@ -1839,7 +1890,7 @@ useEffect(() => {
             <div className="w-2 h-2 rounded-full animate-pulse bg-red-500"></div>
             <span className="text-sm font-semibold text-gray-700">Live Editor</span>
             {!isHost && (
-                <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-semibold">Read-only</span>
+                <span className="hidden md:inline text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-semibold">Read-only</span>
             )}
         </div>
         
@@ -1977,6 +2028,7 @@ useEffect(() => {
             lineNumbers: "on",
             cursorBlinking: "smooth",
             scrollBeyondLastLine: false,
+            padding: { top: 16 },
             scrollbar: {
                 alwaysConsumeMouseWheel: false,
                 verticalScrollbarSize: 8,
@@ -2035,6 +2087,9 @@ useEffect(() => {
                                                         <div className="flex items-center gap-2">
                                                             <span className="font-semibold text-sm text-gray-900 truncate">
                                                                 {participant.isHost ? 'Host' : participant.name}
+                                                                {((isHost && participant.isHost) || participant.name === userName) && (
+                                                                    <span className="font-semibold text-sm text-gray-900 truncate"> (You)</span>
+                                                                )}
                                                             </span>
                                                         </div>
                                                         <div className="flex items-center gap-2 mt-1">
