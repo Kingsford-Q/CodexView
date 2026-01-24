@@ -2115,7 +2115,7 @@ useEffect(() => {
                                                             <span className="font-semibold text-sm text-gray-900 truncate">
                                                                 {participant.isHost ? 'Host' : participant.name}
                                                                 {((isHost && participant.isHost) || (participant.name === userName) || (participant.id === currentSocketIdRef.current)) && (
-                                                                    <span className="text-gray-500 font-normal"> (You)</span>
+                                                                    <span className="font-semibold text-sm text-gray-900 truncate"> (You)</span>
                                                                 )}
                                                             </span>
                                                         </div>
