@@ -254,12 +254,23 @@ const Homepage = () => {
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
         // Play audio from other participants using Web Audio API for real-time playback
+        if (!audioData || !participantId) {
+            console.warn('Invalid audio stream data received');
+            return;
+        }
+        
         try {
             if (!remoteAudioStreamsRef.current[participantId]) {
                 // Create audio context for this participant if it doesn't exist
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Resume audio context if suspended (required by browsers)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+                
                 const gainNode = audioContext.createGain();
-                gainNode.gain.value = 0.5; // Set volume
+                gainNode.gain.value = 0.7; // Set volume
                 gainNode.connect(audioContext.destination);
                 
                 remoteAudioStreamsRef.current[participantId] = {
@@ -270,12 +281,19 @@ const Homepage = () => {
             
             const audioSetup = remoteAudioStreamsRef.current[participantId];
             
+            // Resume audio context if suspended
+            if (audioSetup.audioContext.state === 'suspended') {
+                await audioSetup.audioContext.resume();
+            }
+            
             // Convert base64 back to Int16Array (PCM)
             const binaryString = atob(audioData);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
+            
+            // Convert bytes to Int16Array (handle endianness - little endian)
             const int16Array = new Int16Array(bytes.buffer);
             
             // Convert Int16Array to Float32Array for Web Audio API
@@ -292,7 +310,15 @@ const Homepage = () => {
             const source = audioSetup.audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(audioSetup.gainNode);
-            source.start(0);
+            
+            // Schedule playback
+            const currentTime = audioSetup.audioContext.currentTime;
+            source.start(currentTime);
+            
+            // Clean up source when done
+            source.onended = () => {
+                source.disconnect();
+            };
         } catch (error) {
             console.error('Error playing remote audio:', error);
         }
@@ -471,20 +497,28 @@ useEffect(() => {
                         pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                     }
                     
-                    // Convert to base64 for transmission
+                    // Convert Int16Array to base64 for transmission (handle endianness)
                     const bytes = new Uint8Array(pcmData.buffer);
-                    const binary = String.fromCharCode.apply(null, Array.from(bytes));
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
                     const base64Audio = btoa(binary);
                     
-                    socket.emit('audio-chunk', {
-                        roomId,
-                        audioData: base64Audio,
-                        timestamp: Date.now()
-                    });
+                    // Only send if we have roomId and socket is connected
+                    if (roomId && socket && socket.connected) {
+                        socket.emit('audio-chunk', {
+                            roomId,
+                            audioData: base64Audio,
+                            timestamp: Date.now()
+                        });
+                    }
                     
                     if (!isSpeaking) {
                         isSpeaking = true;
-                        socket.emit('speaker-status', { roomId, isSpeaking: true });
+                        if (roomId && socket && socket.connected) {
+                            socket.emit('speaker-status', { roomId, isSpeaking: true });
+                        }
                     }
                     silenceCounter = 0;
                 } else {
