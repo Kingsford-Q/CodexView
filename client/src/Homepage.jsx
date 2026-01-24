@@ -1689,7 +1689,7 @@ useEffect(() => {
                         </div>
 
                         {/* Support Hours */}
-                        <div className="bg-gradient-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-6 md:p-8 text-white">
+                        <div className="bg-linear-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-6 md:p-8 text-white">
                             <h2 className="text-2xl font-semibold mb-4">Support Hours</h2>
                             <div className="space-y-2 text-sm">
                                 <p><span className="font-semibold">Monday - Friday:</span> 9:00 AM - 6:00 PM EST</p>
