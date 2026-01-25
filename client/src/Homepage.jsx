@@ -253,29 +253,23 @@ const Homepage = () => {
     });
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
-        // Play audio from other participants using Web Audio API for real-time playback
+        // Play audio from other participants using Web Audio API with PCM data
         if (!audioData || !participantId) {
-            console.warn('Invalid audio stream data received');
             return;
         }
         
         try {
+            // Initialize audio context for this participant if needed
             if (!remoteAudioStreamsRef.current[participantId]) {
-                // Create audio context for this participant if it doesn't exist
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                // Resume audio context if suspended (required by browsers)
-                if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-                
                 const gainNode = audioContext.createGain();
-                gainNode.gain.value = 0.7; // Set volume
+                gainNode.gain.value = 0.7;
                 gainNode.connect(audioContext.destination);
                 
                 remoteAudioStreamsRef.current[participantId] = {
                     audioContext,
-                    gainNode
+                    gainNode,
+                    nextPlayTime: 0
                 };
             }
             
@@ -286,14 +280,12 @@ const Homepage = () => {
                 await audioSetup.audioContext.resume();
             }
             
-            // Convert base64 back to Int16Array (PCM)
+            // Convert base64 to Int16Array (PCM)
             const binaryString = atob(audioData);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
-            
-            // Convert bytes to Int16Array (handle endianness - little endian)
             const int16Array = new Int16Array(bytes.buffer);
             
             // Convert Int16Array to Float32Array for Web Audio API
@@ -311,14 +303,19 @@ const Homepage = () => {
             source.buffer = audioBuffer;
             source.connect(audioSetup.gainNode);
             
-            // Schedule playback
+            // Schedule playback for continuous audio
             const currentTime = audioSetup.audioContext.currentTime;
-            source.start(currentTime);
+            const startTime = Math.max(currentTime, audioSetup.nextPlayTime);
+            source.start(startTime);
+            
+            // Update next play time to avoid gaps
+            audioSetup.nextPlayTime = startTime + audioBuffer.duration;
             
             // Clean up source when done
             source.onended = () => {
                 source.disconnect();
             };
+            
         } catch (error) {
             console.error('Error playing remote audio:', error);
         }
@@ -451,62 +448,92 @@ useEffect(() => {
     return () => socket.off('cursor-mirrored');
 }, [socket]);
 
-// Audio streaming setup
+// Audio streaming setup using ScriptProcessorNode (works on mobile and desktop)
 useEffect(() => {
-    if (!socket || !isInSession || !micTrackRef.current) return;
+    if (!socket || !isInSession) return;
 
     let audioContext;
-    let mediaSource;
     let processor;
+    let analyser;
+    let dataArray;
+    let isSpeaking = false;
+    let silenceCounter = 0;
+    let voiceCheckInterval;
 
     const setupAudioProcessing = async () => {
         try {
+            // Ensure microphone is available
+            if (!micStreamRef.current) {
+                const micGranted = await ensureMic();
+                if (!micGranted) {
+                    console.warn('Microphone not available for audio streaming');
+                    return;
+                }
+            }
+
+            if (!micStreamRef.current) {
+                console.warn('Microphone stream not available');
+                return;
+            }
+
+            // Create audio context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Resume audio context if suspended (required by browsers)
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+
             const source = audioContext.createMediaStreamSource(micStreamRef.current);
             
-            // Create script processor for real-time audio processing
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
+            // Create analyser for voice activity detection
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.8;
+            source.connect(analyser);
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+            // Create script processor for audio capture (deprecated but widely supported)
+            // For better support, we'll use a buffer size that works on mobile
+            const bufferSize = 4096;
+            processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
             audioProcessorRef.current = processor;
-            
-            let isSpeaking = false;
-            let silenceCounter = 0;
             
             processor.onaudioprocess = (event) => {
                 const inputData = event.inputBuffer.getChannelData(0);
                 
-                // Calculate RMS (root mean square) to detect voice activity
+                // Calculate RMS for voice activity detection
                 let sum = 0;
                 for (let i = 0; i < inputData.length; i++) {
                     sum += inputData[i] * inputData[i];
                 }
                 const rms = Math.sqrt(sum / inputData.length);
-                
-                // Threshold for voice detection
-                const voiceThreshold = 0.02;
+                const voiceThreshold = 0.015; // Adjusted threshold
                 const currentlySpeaking = rms > voiceThreshold;
                 
-                // Send audio if not muted (or push-to-talk is active)
-                const shouldSendAudio = (!isMuted || isPushToTalk) && micTrackRef.current?.enabled;
+                // Send audio if not muted
+                const shouldSendAudio = !isMuted && micTrackRef.current?.enabled;
                 
                 if (shouldSendAudio && currentlySpeaking) {
-                    // Convert Float32Array to Int16Array (PCM format) for transmission
+                    // Convert Float32Array to Int16Array (PCM)
                     const pcmData = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
-                        // Clamp and convert to 16-bit PCM
                         const s = Math.max(-1, Math.min(1, inputData[i]));
                         pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                     }
                     
-                    // Convert Int16Array to base64 for transmission (handle endianness)
+                    // Convert to base64
                     const bytes = new Uint8Array(pcmData.buffer);
                     let binary = '';
-                    for (let i = 0; i < bytes.length; i++) {
-                        binary += String.fromCharCode(bytes[i]);
+                    const chunkSize = 8192; // Process in chunks to avoid stack overflow
+                    for (let i = 0; i < bytes.length; i += chunkSize) {
+                        const chunk = bytes.slice(i, i + chunkSize);
+                        binary += String.fromCharCode.apply(null, Array.from(chunk));
                     }
                     const base64Audio = btoa(binary);
                     
-                    // Only send if we have roomId and socket is connected
-                    if (roomId && socket && socket.connected) {
+                    // Send audio chunk
+                    if (roomId && socket && socket.connected && base64Audio) {
                         socket.emit('audio-chunk', {
                             roomId,
                             audioData: base64Audio,
@@ -525,13 +552,17 @@ useEffect(() => {
                     silenceCounter++;
                     if (isSpeaking && silenceCounter > 5) {
                         isSpeaking = false;
-                        socket.emit('speaker-status', { roomId, isSpeaking: false });
+                        if (roomId && socket && socket.connected) {
+                            socket.emit('speaker-status', { roomId, isSpeaking: false });
+                        }
                     }
                 }
             };
             
             source.connect(processor);
             processor.connect(audioContext.destination);
+            
+            console.log('Audio streaming setup complete');
         } catch (error) {
             console.error('Error setting up audio processing:', error);
         }
@@ -540,14 +571,19 @@ useEffect(() => {
     setupAudioProcessing();
     
     return () => {
+        if (voiceCheckInterval) {
+            clearInterval(voiceCheckInterval);
+        }
         if (processor) {
             processor.disconnect();
         }
-        if (audioContext) {
-            audioContext.close();
+        if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close().catch(err => {
+                console.error('Error closing audio context:', err);
+            });
         }
     };
-}, [socket, isInSession, isMuted, isPushToTalk, roomId]);
+}, [socket, isInSession, isMuted, roomId]);
 
 // 1. Format Code Logic
     const formatCode = () => {
@@ -723,16 +759,47 @@ useEffect(() => {
     };
 
     const ensureMic = async () => {
-        if (micTrackRef.current) return true;
+        if (micTrackRef.current && micStreamRef.current) {
+            // Check if track is still active
+            if (micTrackRef.current.readyState === 'live') {
+                return true;
+            }
+        }
+        
         try {
-            const stream = await navigator.mediaDevices?.getUserMedia?.({ audio: true });
-            if (!stream) return false;
-            const track = stream.getAudioTracks?.()[0];
-            if (!track) return false;
+            // Check if getUserMedia is available
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.warn('getUserMedia not supported');
+                return false;
+            }
+
+            // Request microphone permission
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                } 
+            });
+            
+            if (!stream) {
+                console.warn('No stream returned from getUserMedia');
+                return false;
+            }
+            
+            const track = stream.getAudioTracks()[0];
+            if (!track) {
+                console.warn('No audio track in stream');
+                stream.getTracks().forEach(t => t.stop());
+                return false;
+            }
+            
             micStreamRef.current = stream;
             micTrackRef.current = track;
+            console.log('Microphone access granted');
             return true;
-        } catch {
+        } catch (error) {
+            console.error('Error getting microphone access:', error);
             return false;
         }
     };

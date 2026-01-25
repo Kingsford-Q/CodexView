@@ -62,13 +62,14 @@ body {
 }
 
 
-button {
+/* Base button styles - only apply if no Tailwind classes are present */
+button:not([class*="bg-"]):not([class*="text-"]) {
   padding: 0.6em 1.2em;
   font-family: inherit;
   cursor: pointer;
   transition: border-color 0.25s;
 }
-button:hover {
+button:not([class*="bg-"]):not([class*="text-"]):hover {
   border-color: #646cff;
 }
 button:focus,
@@ -84,9 +85,10 @@ button:focus-visible {
   a:hover {
     color: #747bff;
   }
-  button {
+  /* Removed button background override to allow Tailwind classes to work */
+  /* button {
     background-color: #f9f9f9;
-  }
+  } */
 }
 
 @keyframes slide-in {
@@ -102,4 +104,21 @@ button:focus-visible {
 
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
+}
+
+/* Ensure primary button colors work across all browsers - override any conflicting styles */
+button[class*="bg-[#0663cc]"],
+[class*="bg-[#0663cc]"] {
+  background-color: #0663cc !important;
+}
+
+button[class*="hover:bg-[#0552a8]"]:hover,
+[class*="hover:bg-[#0552a8]"]:hover {
+  background-color: #0552a8 !important;
+}
+
+/* Ensure text colors work */
+button[class*="text-white"],
+[class*="text-white"] {
+  color: white !important;
 }
