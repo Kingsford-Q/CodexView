@@ -35,7 +35,7 @@ const Homepage = () => {
     const [isInSession, setIsInSession] = useState(false);
     const [isHost, setIsHost] = useState(true);
     const [participants, setParticipants] = useState([
-        { id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSpeaking: false }
+        { id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSelfMuted: false, isMutedByHost: false, isSpeaking: false }
     ]);
     const [sessionStartTime, setSessionStartTime] = useState(null);
     const [sessionTimer, setSessionTimer] = useState('00:00:00');
@@ -132,6 +132,8 @@ const Homepage = () => {
             isHost: p.isHost,
             isOnline: true,
             isMuted: false,
+            isSelfMuted: false,
+            isMutedByHost: false,
             isSpeaking: false
         }));
         
@@ -216,6 +218,8 @@ const Homepage = () => {
                 isHost: newParticipant.isHost, 
                 isOnline: true, 
                 isMuted: false, 
+                isSelfMuted: false,
+                isMutedByHost: false,
                 isSpeaking: false 
             }];
         });
@@ -237,6 +241,8 @@ const Homepage = () => {
             isHost: p.isHost,
             isOnline: true,
             isMuted: false,
+            isSelfMuted: false,
+            isMutedByHost: false,
             isSpeaking: false
         }));
         setParticipants(formattedParticipants);
@@ -252,13 +258,50 @@ const Homepage = () => {
         console.log('You were muted by host');
         setIsMutedByHost(true);
         setIsMuted(true);
+        setParticipants(prev => prev.map(p => 
+            (p.id === currentSocketIdRef.current || p.name === userName || p.id === 'self')
+                ? { ...p, isMuted: true, isMutedByHost: true }
+                : p
+        ));
         addNotification('You have been muted by the host', 'info');
     });
 
     newSocket.on('you-were-unmuted', ({ reason }) => {
         console.log('You were unmuted by host');
         setIsMutedByHost(false);
+        setIsMuted(false);
+        setParticipants(prev => prev.map(p => 
+            (p.id === currentSocketIdRef.current || p.name === userName || p.id === 'self')
+                ? { ...p, isMuted: false, isMutedByHost: false, isSelfMuted: false }
+                : p
+        ));
         addNotification('You have been unmuted by the host', 'success');
+    });
+
+    // Listen for participant mute status changes (host muting/unmuting others)
+    newSocket.on('participant-muted', ({ socketId }) => {
+        setParticipants(prev => prev.map(p => 
+            p.id === socketId
+                ? { ...p, isMuted: true, isMutedByHost: true, isSelfMuted: false }
+                : p
+        ));
+    });
+
+    newSocket.on('participant-unmuted', ({ socketId }) => {
+        setParticipants(prev => prev.map(p => 
+            p.id === socketId
+                ? { ...p, isMuted: false, isMutedByHost: false, isSelfMuted: false }
+                : p
+        ));
+    });
+
+    // Listen for participant self-mute status changes
+    newSocket.on('participant-mute-status', ({ participantId, isSelfMuted, isMuted }) => {
+        setParticipants(prev => prev.map(p => 
+            p.id === participantId
+                ? { ...p, isMuted, isSelfMuted, isMutedByHost: false }
+                : p
+        ));
     });
 
     newSocket.on('session-ended', ({ reason }) => {
@@ -350,6 +393,7 @@ const Homepage = () => {
         // Set flag before updating to prevent emitting back to server
         isRemoteChange.current = true;
         setCodeContent(content);
+        previousCodeRef.current = content;
         // Reset flag after React has processed the update
         // Use requestAnimationFrame to ensure it happens after the onChange handler
         requestAnimationFrame(() => {
@@ -692,14 +736,15 @@ useEffect(() => {
         setLanguage(newLang);
         addNotification(`Language changed to ${newLang}`, 'info');
 
-        // If the live mirror is empty for this client, populate with the provided snippet
+        // Check if current code is just the default "Welcome to CodexView" text
         const current = previousCodeRef.current || '';
-        if (!current || current.toString().trim().length === 0) {
+        const isDefaultContent = current.includes('Welcome to CodexView') || current.includes('console.log("Hello World")') || current.includes("console.log('Hello World')") || current.trim().length === 0;
+        
+        if (isDefaultContent) {
             if (snippet) {
                 isRemoteChange.current = true;
                 setCodeContent(snippet);
                 previousCodeRef.current = snippet;
-                // Clear flag shortly after to avoid re-emitting
                 setTimeout(() => {
                     isRemoteChange.current = false;
                 }, 100);
@@ -1023,6 +1068,8 @@ useEffect(() => {
             isHost: true,
             isOnline: true,
             isMuted: false,
+            isSelfMuted: false,
+            isMutedByHost: false,
             isSpeaking: false
         }]);
         
@@ -1146,13 +1193,65 @@ useEffect(() => {
         });
     };
 
+    const getMuteStatusMessage = (participant) => {
+        if (participant.isMutedByHost) {
+            // Show who muted them
+            if (participant.id === currentSocketIdRef.current || participant.name === userName || participant.id === 'self') {
+                // Current user was muted by host
+                return '🔒 Host muted';
+            } else {
+                // Another user was muted by host (only show if I'm the host)
+                if (isHost) {
+                    return '🔒 You muted';
+                } else {
+                    return '🔇 Muted';
+                }
+            }
+        } else if (participant.isSelfMuted) {
+            // User self-muted
+            if (participant.id === currentSocketIdRef.current || participant.name === userName || participant.id === 'self') {
+                return '🔇 Muted';
+            } else {
+                return '🔇 Mic muted';
+            }
+        } else {
+            return '🎤 Active';
+        }
+    };
+
     const handleMuteToggle = () => {
         // If host has muted us, we can't unmute ourselves
         if (isMutedByHost && !isMuted) {
             addNotification('Host has muted you. Cannot unmute.', 'info');
             return;
         }
-        setIsMuted(!isMuted);
+        const newMuteState = !isMuted;
+        setIsMuted(newMuteState);
+        
+        // Update own participant in list
+        if (newMuteState && !isMutedByHost) {
+            // Muting self
+            setParticipants(prev => prev.map(p => 
+                (p.id === currentSocketIdRef.current || p.name === userName || (p.id === 'self')) 
+                    ? { ...p, isMuted: true, isSelfMuted: true } 
+                    : p
+            ));
+        } else if (!newMuteState && !isMutedByHost) {
+            // Unmuting self
+            setParticipants(prev => prev.map(p => 
+                (p.id === currentSocketIdRef.current || p.name === userName || (p.id === 'self'))
+                    ? { ...p, isMuted: false, isSelfMuted: false }
+                    : p
+            ));
+        }
+        
+        // Emit to server so others can see the change
+        if (socket && roomId) {
+            socket.emit('participant-self-muted', {
+                roomId,
+                isMuted: newMuteState
+            });
+        }
     };
 
     const handleMuteParticipant = (participantId) => {
@@ -2308,11 +2407,13 @@ useEffect(() => {
                                                             </span>
                                                         </div>
                                                         <div className="flex items-center gap-2 mt-1">
-                                                            {participant.isMuted ? (
-                                                                <span className="text-xs text-red-500">🔇 Muted</span>
-                                                            ) : (
-                                                                <span className="text-xs text-green-500">🎤 Active</span>
-                                                            )}
+                                                            <span className={`text-xs ${
+                                                                participant.isMuted 
+                                                                    ? 'text-red-500' 
+                                                                    : 'text-green-500'
+                                                            }`}>
+                                                                {getMuteStatusMessage(participant)}
+                                                            </span>
                                                         </div>
                                                     </div>
                                                 </div>

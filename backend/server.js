@@ -67,6 +67,8 @@ io.on('connection', (socket) => {
             mutedParticipants[roomId][socketId] = true;
             // Notify the muted participant
             io.to(socketId).emit('you-were-muted', { reason: 'Host muted you' });
+            // Broadcast to all participants in room that this person was muted
+            io.to(roomId).emit('participant-muted', { socketId });
         } catch (error) {
             console.error('Error muting participant:', error);
         }
@@ -81,8 +83,25 @@ io.on('connection', (socket) => {
             }
             // Notify the unmuted participant
             io.to(socketId).emit('you-were-unmuted', { reason: 'Host unmuted you' });
+            // Broadcast to all participants in room that this person was unmuted
+            io.to(roomId).emit('participant-unmuted', { socketId });
         } catch (error) {
             console.error('Error unmuting participant:', error);
+        }
+    });
+
+    // Self-mute status (when participant mutes themselves)
+    socket.on('participant-self-muted', async (data) => {
+        const { roomId, isMuted } = data;
+        try {
+            // Broadcast to all participants in room
+            io.to(roomId).emit('participant-mute-status', { 
+                participantId: socket.id, 
+                isSelfMuted: isMuted,
+                isMuted: isMuted 
+            });
+        } catch (error) {
+            console.error('Error broadcasting self-mute:', error);
         }
     });
 
@@ -183,8 +202,14 @@ io.on('connection', (socket) => {
             const room = await Room.findOne({ roomId });
             let snippetToSend = room?.codeContent || '';
 
-            // If there is no code content (empty or whitespace), set a default snippet for this language
-            if (!snippetToSend || snippetToSend.toString().trim().length === 0) {
+            // Check if code is empty or just the default "Welcome to CodexView" template
+            const isDefaultOrEmpty = !snippetToSend || 
+                                     snippetToSend.toString().trim().length === 0 || 
+                                     snippetToSend.includes('Welcome to CodexView') ||
+                                     snippetToSend.includes('console.log("Hello World")') ||
+                                     snippetToSend.includes("console.log('Hello World')");
+
+            if (isDefaultOrEmpty) {
                 const key = (language || '').toLowerCase();
                 snippetToSend = defaultSnippets[key] || '';
 
