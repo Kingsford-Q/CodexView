@@ -1521,9 +1521,9 @@ useEffect(() => {
     useEffect(() => {
         const track = micTrackRef.current;
         if (!track) return;
-        // If muted, disable mic
-        track.enabled = !isMuted;
-    }, [isMuted]);
+        // If muted OR host-muted, disable mic completely
+        track.enabled = !isMuted && !isMutedByHost;
+    }, [isMuted, isMutedByHost]);
 
     // Cleanup mic on unmount just in case
     useEffect(() => {
@@ -2551,17 +2551,17 @@ useEffect(() => {
                                     <div className="flex gap-2">
                                         <button
                                             onClick={handleMuteToggle}
-                                            disabled={isMutedByHost && !isMuted}
+                                            disabled={isMutedByHost}
                                             className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
-                                                isMutedByHost && !isMuted
+                                                isMutedByHost
                                                     ? 'bg-gray-300 cursor-not-allowed text-gray-600'
                                                     : isMuted 
                                                     ? 'bg-red-500 hover:bg-red-600 text-white' 
                                                     : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
                                             }`}
-                                            title={isMutedByHost && !isMuted ? 'Host has muted you' : ''}
+                                            title={isMutedByHost ? 'Host has muted you' : ''}
                                         >
-                                            {isMutedByHost && !isMuted ? '🔒 Muted by Host' : (isMuted ? '🔇 Unmute' : '🎤 Mute')}
+                                            {isMutedByHost ? '🔒 Muted by Host' : (isMuted ? '🔇 Unmute' : '🎤 Mute')}
                                         </button>
 
                                         {/* Mobile: show explicit enable microphone button to trigger permission prompt */}
