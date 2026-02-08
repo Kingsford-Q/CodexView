@@ -1747,7 +1747,7 @@ useEffect(() => {
                                 <div
                                     key={index}
                                     className={`border rounded-lg shadow-sm overflow-hidden transition-all ${
-                                    openIndex === index ? "border-blue-500" : "border-gray-200"
+                                    openIndex === index ? "border-[#0663cc]" : "border-gray-200"
                                     }`}
                                 >
                                     <button
@@ -1760,7 +1760,7 @@ useEffect(() => {
                                     </span>
                                     </button>
                                     {openIndex === index && (
-                                    <div className="p-4 border-t border-gray-200 text-gray-700 text-sm">
+                                    <div className="p-4 border-t border-[#0663cc] text-gray-700 text-sm">
                                         {faq.answer}
                                     </div>
                                     )}
@@ -2072,7 +2072,7 @@ useEffect(() => {
                 )}
 
                 {activeTab === 'help' && (
-                    <div className="w-full max-w-4xl mx-auto px-4 md:px-6">
+                    <div className="w-full max-w-4xl mx-auto px-4 md:px-6 -mt-12">
                         <div className="text-center mb-8">
                             <h1 className="md:text-2xl text-lg font-bold text-gray-900 mb-2">
                                 Help & Support
@@ -2083,7 +2083,7 @@ useEffect(() => {
                         </div>
 
                         {/* Contact Information */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 md:p-10 mb-16">
                             <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Contact Information</h2>
                             <div className="space-y-3">
                                 <div className="flex items-start gap-3">
@@ -2137,7 +2137,7 @@ useEffect(() => {
                         </div>
 
                         {/* Quick Links */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 md:p-10 mb-16">
                             <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Quick Links</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <a href="#" className="p-3 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
@@ -2160,7 +2160,7 @@ useEffect(() => {
                         </div>
 
                         {/* FAQ Section */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 md:p-10 mb-16">
                             <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Frequently Asked Questions</h2>
                             <div className="space-y-3">
                                 {faqs.map((faq, index) => (
@@ -2190,7 +2190,7 @@ useEffect(() => {
                         </div>
 
                         {/* Support Hours */}
-                        <div className="bg-linear-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-4 md:p-6 text-white">
+                        <div className="bg-linear-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-8 md:p-10 text-white">
                             <h2 className="md:text-lg text-base font-semibold mb-3">Support Hours</h2>
                             <div className="space-y-1 text-xs">
                                 <p><span className="font-semibold">Monday - Friday:</span> 9:00 AM - 6:00 PM EST</p>
