@@ -41,7 +41,7 @@ const Homepage = () => {
     const [sessionTimer, setSessionTimer] = useState('00:00:00');
     const [notifications, setNotifications] = useState([]);
     const [isMuted, setIsMuted] = useState(false);
-    const [isPushToTalk, setIsPushToTalk] = useState(false);
+    const [isMutedByHost, setIsMutedByHost] = useState(false);
     const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
     
     // Join room state
@@ -243,6 +243,19 @@ const Homepage = () => {
         handleLeaveSession();
     });
 
+    newSocket.on('you-were-muted', ({ reason }) => {
+        console.log('You were muted by host');
+        setIsMutedByHost(true);
+        setIsMuted(true);
+        addNotification('You have been muted by the host', 'info');
+    });
+
+    newSocket.on('you-were-unmuted', ({ reason }) => {
+        console.log('You were unmuted by host');
+        setIsMutedByHost(false);
+        addNotification('You have been unmuted by the host', 'success');
+    });
+
     newSocket.on('session-ended', ({ reason }) => {
         console.log('Session ended by host');
         addNotification('The session has ended', 'error');
@@ -326,13 +339,6 @@ const Homepage = () => {
         setParticipants(prev => prev.map(p => 
             p.id === participantId ? { ...p, isSpeaking } : p
         ));
-        
-        // Play sound when someone starts or stops speaking
-        if (isSpeaking) {
-            playNotificationSound('success');
-        } else {
-            playNotificationSound('error');
-        }
     });
 
     newSocket.on('code-mirrored', (content) => {
@@ -511,7 +517,7 @@ useEffect(() => {
                 const voiceThreshold = 0.015; // Adjusted threshold
                 const currentlySpeaking = rms > voiceThreshold;
                 
-                // Send audio if not muted
+                // Send audio if not muted and mic is enabled
                 const shouldSendAudio = !isMuted && micTrackRef.current?.enabled;
                 
                 if (shouldSendAudio && currentlySpeaking) {
@@ -565,6 +571,7 @@ useEffect(() => {
             console.log('Audio streaming setup complete');
         } catch (error) {
             console.error('Error setting up audio processing:', error);
+            addNotification('Failed to setup audio: ' + error.message, 'error');
         }
     };
     
@@ -770,20 +777,23 @@ useEffect(() => {
             // Check if getUserMedia is available
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 console.warn('getUserMedia not supported');
+                addNotification('Microphone not supported on this device', 'error');
                 return false;
             }
 
-            // Request microphone permission
+            // Request microphone permission with mobile-compatible settings
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
-                } 
+                },
+                video: false
             });
             
             if (!stream) {
                 console.warn('No stream returned from getUserMedia');
+                addNotification('Failed to access microphone', 'error');
                 return false;
             }
             
@@ -791,15 +801,27 @@ useEffect(() => {
             if (!track) {
                 console.warn('No audio track in stream');
                 stream.getTracks().forEach(t => t.stop());
+                addNotification('No audio tracks available', 'error');
                 return false;
             }
             
             micStreamRef.current = stream;
             micTrackRef.current = track;
             console.log('Microphone access granted');
+            addNotification('Microphone enabled', 'success');
             return true;
         } catch (error) {
             console.error('Error getting microphone access:', error);
+            // Provide user-friendly error messages
+            if (error.name === 'NotAllowedError') {
+                addNotification('Microphone permission denied. Enable in settings to use voice.', 'error');
+            } else if (error.name === 'NotFoundError') {
+                addNotification('No microphone found on this device', 'error');
+            } else if (error.name === 'NotReadableError') {
+                addNotification('Microphone is already in use by another app', 'error');
+            } else {
+                addNotification('Failed to access microphone', 'error');
+            }
             return false;
         }
     };
@@ -970,7 +992,7 @@ useEffect(() => {
         setNotifications([]);
         setOutput("");
         setIsMuted(false);
-        setIsPushToTalk(false);
+        setIsMutedByHost(false);
         
         // Clear session from sessionStorage
         removeSessionData('currentSession');
@@ -1054,13 +1076,42 @@ useEffect(() => {
     };
 
     const handleMuteToggle = () => {
+        // If host has muted us, we can't unmute ourselves
+        if (isMutedByHost && !isMuted) {
+            addNotification('Host has muted you. Cannot unmute.', 'info');
+            return;
+        }
         setIsMuted(!isMuted);
     };
 
     const handleMuteParticipant = (participantId) => {
+        // Check CURRENT state before updating
+        const participant = participants.find(p => p.id === participantId);
+        if (!participant) return;
+        
+        const isCurrentlyMuted = participant.isMuted;
+        
+        // Update UI
         setParticipants(prev => prev.map(p => 
             p.id === participantId ? { ...p, isMuted: !p.isMuted } : p
         ));
+        
+        // Emit appropriate event based on CURRENT state
+        if (socket && roomId) {
+            if (isCurrentlyMuted) {
+                // Currently muted, so unmute
+                socket.emit('unmute-participant', {
+                    roomId,
+                    socketId: participantId
+                });
+            } else {
+                // Currently not muted, so mute
+                socket.emit('mute-participant', {
+                    roomId,
+                    socketId: participantId
+                });
+            }
+        }
     };
 
     const handleRemoveParticipant = (participantId) => {
@@ -1197,9 +1248,9 @@ useEffect(() => {
     useEffect(() => {
         const track = micTrackRef.current;
         if (!track) return;
-        // If muted, disable mic unless push-to-talk is currently pressed.
-        track.enabled = Boolean((!isMuted) || isPushToTalk);
-    }, [isMuted, isPushToTalk]);
+        // If muted, disable mic
+        track.enabled = !isMuted;
+    }, [isMuted]);
 
     // Cleanup mic on unmount just in case
     useEffect(() => {
@@ -2225,31 +2276,17 @@ useEffect(() => {
                                     <div className="flex gap-2">
                                         <button
                                             onClick={handleMuteToggle}
+                                            disabled={isMutedByHost && !isMuted}
                                             className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
-                                                isMuted 
+                                                isMutedByHost && !isMuted
+                                                    ? 'bg-gray-300 cursor-not-allowed text-gray-600'
+                                                    : isMuted 
                                                     ? 'bg-red-500 hover:bg-red-600 text-white' 
                                                     : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
                                             }`}
+                                            title={isMutedByHost && !isMuted ? 'Host has muted you' : ''}
                                         >
-                                            {isMuted ? '🔇 Unmute' : '🎤 Mute'}
-                                        </button>
-                                        <button
-                                            onMouseDown={() => setIsPushToTalk(true)}
-                                            onMouseUp={() => setIsPushToTalk(false)}
-                                            onMouseLeave={() => setIsPushToTalk(false)}
-                                            onTouchStart={() => setIsPushToTalk(true)}
-                                            onTouchEnd={() => setIsPushToTalk(false)}
-                                            onTouchCancel={() => setIsPushToTalk(false)}
-                                            onPointerDown={() => setIsPushToTalk(true)}
-                                            onPointerUp={() => setIsPushToTalk(false)}
-                                            onPointerCancel={() => setIsPushToTalk(false)}
-                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
-                                                isPushToTalk 
-                                                    ? 'bg-[#0663cc] hover:bg-[#0552a8] text-white' 
-                                                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                                            }`}
-                                        >
-                                            Push to Talk
+                                            {isMutedByHost && !isMuted ? '🔒 Muted by Host' : (isMuted ? '🔇 Unmute' : '🎤 Mute')}
                                         </button>
                                     </div>
                                 </div>

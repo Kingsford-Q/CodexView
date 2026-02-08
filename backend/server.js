@@ -46,12 +46,44 @@ app.use((req, res) => {
 });
 
 
+// Store muted participants
+const mutedParticipants = {};
+
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
     // Connection quality tracking
     socket.on('ping', (data) => {
         socket.emit('pong', data);
+    });
+
+    // Mute participant endpoint
+    socket.on('mute-participant', async (data) => {
+        const { roomId, socketId } = data;
+        try {
+            if (!mutedParticipants[roomId]) {
+                mutedParticipants[roomId] = {};
+            }
+            mutedParticipants[roomId][socketId] = true;
+            // Notify the muted participant
+            io.to(socketId).emit('you-were-muted', { reason: 'Host muted you' });
+        } catch (error) {
+            console.error('Error muting participant:', error);
+        }
+    });
+
+    // Unmute participant endpoint
+    socket.on('unmute-participant', async (data) => {
+        const { roomId, socketId } = data;
+        try {
+            if (mutedParticipants[roomId]) {
+                delete mutedParticipants[roomId][socketId];
+            }
+            // Notify the unmuted participant
+            io.to(socketId).emit('you-were-unmuted', { reason: 'Host unmuted you' });
+        } catch (error) {
+            console.error('Error unmuting participant:', error);
+        }
     });
 
     // Room creation
@@ -149,9 +181,16 @@ io.on('connection', (socket) => {
         });
     });
 
-    // Audio chunk streaming
+    // Audio chunk streaming - with mute enforcement
     socket.on('audio-chunk', (data) => {
         const { roomId, audioData, timestamp } = data;
+        
+        // Check if participant is muted
+        if (mutedParticipants[roomId] && mutedParticipants[roomId][socket.id]) {
+            console.log(`Audio from muted participant ${socket.id} in room ${roomId} - dropping audio`);
+            return; // Don't broadcast muted participant's audio
+        }
+        
         // Broadcast audio to all other participants in the room
         socket.to(roomId).emit('audio-stream', {
             participantId: socket.id,
@@ -242,6 +281,11 @@ io.on('connection', (socket) => {
                 
                 // Sync full participant list to all remaining users
                 io.to(room.roomId).emit('sync-participants', { participants: room.participants });
+                
+                // Clean up muted participants data for this socket
+                for (const roomId in mutedParticipants) {
+                    delete mutedParticipants[roomId][socket.id];
+                }
             }
         } catch (error) {
             console.error('Error on disconnect:', error);
