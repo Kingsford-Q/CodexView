@@ -46,8 +46,10 @@ app.use((req, res) => {
 });
 
 
-// Store muted participants
+// Store muted participants (audio blocked at server)
 const mutedParticipants = {};
+// Track self-muted participants separately (can unmute themselves)
+const selfMutedParticipants = {};
 
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
@@ -57,18 +59,27 @@ io.on('connection', (socket) => {
         socket.emit('pong', data);
     });
 
-    // Mute participant endpoint
+    // Mute participant endpoint (host mute)
     socket.on('mute-participant', async (data) => {
         const { roomId, socketId } = data;
         try {
             if (!mutedParticipants[roomId]) {
                 mutedParticipants[roomId] = {};
             }
+            if (!selfMutedParticipants[roomId]) {
+                selfMutedParticipants[roomId] = {};
+            }
             mutedParticipants[roomId][socketId] = true;
+            // Clear self-mute if it exists (host-mute overrides)
+            delete selfMutedParticipants[roomId][socketId];
             // Notify the muted participant
             io.to(socketId).emit('you-were-muted', { reason: 'Host muted you' });
-            // Broadcast to all participants in room that this person was muted
-            io.to(roomId).emit('participant-muted', { socketId });
+            // Broadcast to all participants in room that this person was muted by host
+            io.to(roomId).emit('participant-mute-status', { 
+                participantId: socketId, 
+                isSelfMuted: false, 
+                isMuted: true 
+            });
         } catch (error) {
             console.error('Error muting participant:', error);
         }
@@ -81,10 +92,17 @@ io.on('connection', (socket) => {
             if (mutedParticipants[roomId]) {
                 delete mutedParticipants[roomId][socketId];
             }
+            if (selfMutedParticipants[roomId]) {
+                delete selfMutedParticipants[roomId][socketId];
+            }
             // Notify the unmuted participant
             io.to(socketId).emit('you-were-unmuted', { reason: 'Host unmuted you' });
             // Broadcast to all participants in room that this person was unmuted
-            io.to(roomId).emit('participant-unmuted', { socketId });
+            io.to(roomId).emit('participant-mute-status', { 
+                participantId: socketId, 
+                isSelfMuted: false, 
+                isMuted: false 
+            });
         } catch (error) {
             console.error('Error unmuting participant:', error);
         }
@@ -94,6 +112,19 @@ io.on('connection', (socket) => {
     socket.on('participant-self-muted', async (data) => {
         const { roomId, isMuted } = data;
         try {
+            if (!selfMutedParticipants[roomId]) selfMutedParticipants[roomId] = {};
+            if (!mutedParticipants[roomId]) mutedParticipants[roomId] = {};
+
+            if (isMuted) {
+                // Mark as self-muted
+                selfMutedParticipants[roomId][socket.id] = true;
+                mutedParticipants[roomId][socket.id] = true;
+            } else {
+                // Unmute: remove from both if it's self-unmute (not host-unmute)
+                delete selfMutedParticipants[roomId][socket.id];
+                delete mutedParticipants[roomId][socket.id];
+            }
+
             // Broadcast to ALL participants in room (including the sender)
             io.to(roomId).emit('participant-mute-status', { 
                 participantId: socket.id, 
@@ -170,6 +201,9 @@ io.on('connection', (socket) => {
 
             // By default self-mute new joiners so they can unmute themselves unless host blocks them
             if (!isHost) {
+                if (!selfMutedParticipants[roomId]) selfMutedParticipants[roomId] = {};
+                selfMutedParticipants[roomId][socket.id] = true;
+                // Also add to mutedParticipants for audio blocking
                 if (!mutedParticipants[roomId]) mutedParticipants[roomId] = {};
                 mutedParticipants[roomId][socket.id] = true;
                 // Notify the new participant that they self-muted on join
@@ -183,13 +217,29 @@ io.on('connection', (socket) => {
             }
 
             // Send authoritative mute status of all existing participants to the new joiner
-            if (mutedParticipants[roomId]) {
-                Object.keys(mutedParticipants[roomId]).forEach((participantSocketId) => {
+            // Send self-muted participants
+            if (selfMutedParticipants[roomId]) {
+                Object.keys(selfMutedParticipants[roomId]).forEach((participantSocketId) => {
                     io.to(socket.id).emit('participant-mute-status', {
                         participantId: participantSocketId,
-                        isSelfMuted: true, // For now, treat all muted as self-muted
+                        isSelfMuted: true,
                         isMuted: true
                     });
+                });
+            }
+
+            // Send host-muted participants (if any were host-muted, they'd be in mutedParticipants but NOT in selfMutedParticipants)
+            if (mutedParticipants[roomId]) {
+                Object.keys(mutedParticipants[roomId]).forEach((participantSocketId) => {
+                    // Check if this is host-muted (in mutedParticipants but NOT in selfMutedParticipants)
+                    const isSelfMuted = selfMutedParticipants[roomId] && selfMutedParticipants[roomId][participantSocketId];
+                    if (!isSelfMuted) {
+                        io.to(socket.id).emit('participant-mute-status', {
+                            participantId: participantSocketId,
+                            isSelfMuted: false,
+                            isMuted: true
+                        });
+                    }
                 });
             }
 

@@ -394,6 +394,11 @@ const Homepage = () => {
         setLanguage('javascript');
         setErrors({ roomName: "", subject: "" });
         
+        // Clear join room field so participants can't rejoin the old room
+        setJoinRoomKey("");
+        setJoinRoomError("");
+        setJoinRoomName("");
+        
         // Clear all session from sessionStorage
         removeSessionData('currentSession');
         removeSessionData('roomName');
@@ -1308,14 +1313,8 @@ useEffect(() => {
         const isCurrentUser = participant.id === currentSocketIdRef.current;
         
         if (participant.isMutedByHost) {
-            // User is muted by host (cannot unmute themselves)
-            if (isCurrentUser) {
-                // Current user was muted by host
-                return '🔒 Host muted';
-            } else {
-                // Viewing someone else muted by host
-                return '🔒 Muted by you';
-            }
+            // User is muted by host (cannot unmute themselves) — everyone sees the same message
+            return '🔒 Host muted';
         } else if (participant.isSelfMuted) {
             // User self-muted (can unmute themselves)
             if (isCurrentUser) {
