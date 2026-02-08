@@ -120,8 +120,17 @@ const Homepage = () => {
         console.log('Room created:', room);
         addNotification('Room created successfully!', 'success');
 
-        // Initialize host session from server-provided room so host and server stay in sync
+        // Populate basic room info so host can copy the room id and prepare before starting
         try {
+            setRoomId(room.roomId);
+            setRoomName(room.roomName || room.roomId);
+            setSubject(room.subject || 'Live Coding Session');
+
+            // Keep roomCreated flag so UI shows the created-room view where host can copy the id.
+            setRoomCreated(true);
+
+            // Do not auto-enter session here — host should explicitly start the session.
+            // However, prefill participants list with the server participant entry (for display)
             const roomParticipants = room.participants.map(p => ({
                 id: p.socketId,
                 name: p.name,
@@ -132,30 +141,9 @@ const Homepage = () => {
                 isMutedByHost: false,
                 isSpeaking: false
             }));
-
-            // Sync code content from room if present
-            if (room.codeContent) {
-                isRemoteChange.current = true;
-                setCodeContent(room.codeContent);
-                previousCodeRef.current = room.codeContent;
-                setTimeout(() => { isRemoteChange.current = false; }, 100);
-            }
-
-            if (room.language) setLanguage(room.language);
-
-            // Set session state for host
-            setRoomId(room.roomId);
-            setRoomName(room.roomName || room.roomId);
-            setSubject(room.subject || 'Live Coding Session');
-            setIsInSession(true);
-            setIsHost(true);
-            // Use server participant socketId so host is represented consistently
             setParticipants(roomParticipants);
-            setActiveTab('session');
-            setSessionStartTime(Date.now());
-            setMobileSessionTab('editor');
         } catch (e) {
-            console.error('Error initializing created room:', e);
+            console.error('Error handling room-created:', e);
         }
     });
 
@@ -818,20 +806,15 @@ useEffect(() => {
     socket.on('language-changed', ({ language: newLang, snippet }) => {
         setLanguage(newLang);
         addNotification(`Language changed to ${newLang}`, 'info');
-
-        // Check if current code is just the default "Welcome to CodexView" text
-        const current = previousCodeRef.current || '';
-        const isDefaultContent = current.includes('Welcome to CodexView') || current.includes('console.log("Hello World")') || current.includes("console.log('Hello World')") || current.trim().length === 0;
-        
-        if (isDefaultContent) {
-            if (snippet) {
-                isRemoteChange.current = true;
-                setCodeContent(snippet);
-                previousCodeRef.current = snippet;
-                setTimeout(() => {
-                    isRemoteChange.current = false;
-                }, 100);
-            }
+        // Apply provided snippet to all clients so host and participants stay in sync.
+        // If snippet is provided, treat it as the authoritative content for this language change.
+        if (snippet) {
+            isRemoteChange.current = true;
+            setCodeContent(snippet);
+            previousCodeRef.current = snippet;
+            setTimeout(() => {
+                isRemoteChange.current = false;
+            }, 100);
         }
     });
 
