@@ -385,18 +385,19 @@ const Homepage = () => {
         setIsMuted(false);
         setIsMutedByHost(false);
         
-        // Clear session from sessionStorage
-        removeSessionData('currentSession');
-        removeSessionData('roomName');
-        removeSessionData('subject');
-        
-        // Reset create room form
+        // Clear all room-related data from state
+        setRoomId("");
         setRoomName("");
         setSubject("");
         setRoomCreated(false);
-        setRoomId("");
         setCopied(false);
+        setLanguage('javascript');
         setErrors({ roomName: "", subject: "" });
+        
+        // Clear all session from sessionStorage
+        removeSessionData('currentSession');
+        removeSessionData('roomName');
+        removeSessionData('subject');
     });
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
