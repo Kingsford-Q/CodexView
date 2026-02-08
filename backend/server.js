@@ -147,6 +147,13 @@ io.on('connection', (socket) => {
                 await room.save();
                 socket.join(roomId);
                 socket.emit('room-joined', room);
+
+                // If this participant was previously muted on this room, notify them and the room
+                if (mutedParticipants[roomId] && mutedParticipants[roomId][socket.id]) {
+                    io.to(socket.id).emit('you-were-muted', { reason: 'Muted on rejoin' });
+                    io.to(roomId).emit('participant-muted', { socketId: socket.id });
+                }
+
                 // Sync all participants to ensure everyone has correct list
                 io.to(roomId).emit('sync-participants', { participants: room.participants });
                 return;
@@ -160,6 +167,17 @@ io.on('connection', (socket) => {
             socket.join(roomId);
             io.to(roomId).emit('participant-joined', { room, newParticipant });
             socket.emit('room-joined', room);
+
+            // By default mute new joiners' microphones until host/unmute action
+            if (!isHost) {
+                if (!mutedParticipants[roomId]) mutedParticipants[roomId] = {};
+                mutedParticipants[roomId][socket.id] = true;
+                // Notify the new participant that they are muted
+                io.to(socket.id).emit('you-were-muted', { reason: 'Muted on join' });
+                // Notify everyone that this participant is muted in UI
+                io.to(roomId).emit('participant-muted', { socketId: socket.id });
+            }
+
             // Sync all participants to ensure everyone has correct list
             io.to(roomId).emit('sync-participants', { participants: room.participants });
         } catch (error) {
