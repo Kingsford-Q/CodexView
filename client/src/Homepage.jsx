@@ -2323,7 +2323,7 @@ useEffect(() => {
                     : 'bg-gray-300 cursor-not-allowed opacity-50'
                 }`}
             >
-                <span>{language === 'html' ? '👁️' : '▶'}</span> Run
+                <span>▶</span> Run
             </button>
 
             {/* Settings Toggle Button */}
