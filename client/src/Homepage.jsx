@@ -1328,8 +1328,8 @@ useEffect(() => {
     };
 
     const handleMuteToggle = () => {
-        // If host has muted us, we can't unmute ourselves
-        if (isMutedByHost && !isMuted) {
+        // If host has muted us, we cannot do anything (including trying to unmute)
+        if (isMutedByHost) {
             addNotification('Host has muted you. Cannot unmute.', 'info');
             return;
         }
