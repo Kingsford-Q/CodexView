@@ -89,19 +89,20 @@ io.on('connection', (socket) => {
     socket.on('unmute-participant', async (data) => {
         const { roomId, socketId } = data;
         try {
+            // Only clear host-mute, preserve self-mute state
             if (mutedParticipants[roomId]) {
                 delete mutedParticipants[roomId][socketId];
             }
-            if (selfMutedParticipants[roomId]) {
-                delete selfMutedParticipants[roomId][socketId];
-            }
-            // Notify the unmuted participant
-            io.to(socketId).emit('you-were-unmuted', { reason: 'Host unmuted you' });
-            // Broadcast to all participants in room that this person was unmuted
+            // Check if user is still self-muted
+            const isSelfMuted = selfMutedParticipants[roomId] && selfMutedParticipants[roomId][socketId];
+            
+            // Notify the unmuted participant (clearing host-mute)
+            io.to(socketId).emit('you-were-unmuted', { reason: 'Host unmuted you', isSelfMuted });
+            // Broadcast to all participants - preserve self-mute state
             io.to(roomId).emit('participant-mute-status', { 
                 participantId: socketId, 
-                isSelfMuted: false, 
-                isMuted: false 
+                isSelfMuted: !!isSelfMuted, 
+                isMuted: !!isSelfMuted  // Only muted if self-muted
             });
         } catch (error) {
             console.error('Error unmuting participant:', error);

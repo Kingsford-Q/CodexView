@@ -318,15 +318,21 @@ const Homepage = () => {
         addNotification('Microphone muted (you can unmute)', 'info');
     });
 
-    newSocket.on('you-were-unmuted', ({ reason }) => {
+    newSocket.on('you-were-unmuted', ({ reason, isSelfMuted }) => {
         console.log('You were unmuted by host');
         setIsMutedByHost(false);
-        setIsMuted(false);
+        // Only set isMuted if still self-muted
+        setIsMuted(isSelfMuted || false);
         setParticipants(prev => prev.map(p => {
             // Match current user by socket ID (most reliable)
             const isCurrentUser = p.id === currentSocketIdRef.current;
             if (isCurrentUser) {
-                return { ...p, isMuted: false, isMutedByHost: false, isSelfMuted: false };
+                return { 
+                    ...p, 
+                    isMuted: isSelfMuted || false, 
+                    isMutedByHost: false, 
+                    isSelfMuted: isSelfMuted || false 
+                };
             }
             return p;
         }));
