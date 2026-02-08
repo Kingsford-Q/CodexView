@@ -303,6 +303,21 @@ const Homepage = () => {
         addNotification('You have been muted by the host', 'info');
     });
 
+    newSocket.on('you-were-self-muted', ({ reason }) => {
+        console.log('You self-muted on join');
+        setIsMuted(true);
+        setIsMutedByHost(false);
+        setParticipants(prev => prev.map(p => {
+            // Match current user by socket ID (most reliable)
+            const isCurrentUser = p.id === currentSocketIdRef.current;
+            if (isCurrentUser) {
+                return { ...p, isMuted: true, isSelfMuted: true, isMutedByHost: false };
+            }
+            return p;
+        }));
+        addNotification('Microphone muted (you can unmute)', 'info');
+    });
+
     newSocket.on('you-were-unmuted', ({ reason }) => {
         console.log('You were unmuted by host');
         setIsMutedByHost(false);
@@ -1292,20 +1307,20 @@ useEffect(() => {
         const isCurrentUser = participant.id === currentSocketIdRef.current;
         
         if (participant.isMutedByHost) {
-            // User is muted by host
+            // User is muted by host (cannot unmute themselves)
             if (isCurrentUser) {
                 // Current user was muted by host
                 return '🔒 Host muted';
             } else {
                 // Viewing someone else muted by host
-                return '🔒 Muted';
+                return '🔒 Muted by you';
             }
         } else if (participant.isSelfMuted) {
-            // User self-muted
+            // User self-muted (can unmute themselves)
             if (isCurrentUser) {
-                return '🔇 Muted';
+                return '🔇 You muted';
             } else {
-                return '🔇 Mic muted';
+                return '🔇 Muted';
             }
         } else {
             return '🎤 Active';

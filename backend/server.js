@@ -168,14 +168,29 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('participant-joined', { room, newParticipant });
             socket.emit('room-joined', room);
 
-            // By default mute new joiners' microphones until host/unmute action
+            // By default self-mute new joiners so they can unmute themselves unless host blocks them
             if (!isHost) {
                 if (!mutedParticipants[roomId]) mutedParticipants[roomId] = {};
                 mutedParticipants[roomId][socket.id] = true;
-                // Notify the new participant that they are muted
-                io.to(socket.id).emit('you-were-muted', { reason: 'Muted on join' });
-                // Notify everyone that this participant is muted in UI
-                io.to(roomId).emit('participant-muted', { socketId: socket.id });
+                // Notify the new participant that they self-muted on join
+                io.to(socket.id).emit('you-were-self-muted', { reason: 'Self-muted on join' });
+                // Notify everyone that this participant is self-muted in UI
+                io.to(roomId).emit('participant-mute-status', { 
+                    participantId: socket.id, 
+                    isSelfMuted: true, 
+                    isMuted: true 
+                });
+            }
+
+            // Send authoritative mute status of all existing participants to the new joiner
+            if (mutedParticipants[roomId]) {
+                Object.keys(mutedParticipants[roomId]).forEach((participantSocketId) => {
+                    io.to(socket.id).emit('participant-mute-status', {
+                        participantId: participantSocketId,
+                        isSelfMuted: true, // For now, treat all muted as self-muted
+                        isMuted: true
+                    });
+                });
             }
 
             // Sync all participants to ensure everyone has correct list
