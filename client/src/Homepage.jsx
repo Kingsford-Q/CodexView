@@ -119,6 +119,44 @@ const Homepage = () => {
     newSocket.on('room-created', (room) => {
         console.log('Room created:', room);
         addNotification('Room created successfully!', 'success');
+
+        // Initialize host session from server-provided room so host and server stay in sync
+        try {
+            const roomParticipants = room.participants.map(p => ({
+                id: p.socketId,
+                name: p.name,
+                isHost: p.isHost,
+                isOnline: true,
+                isMuted: false,
+                isSelfMuted: false,
+                isMutedByHost: false,
+                isSpeaking: false
+            }));
+
+            // Sync code content from room if present
+            if (room.codeContent) {
+                isRemoteChange.current = true;
+                setCodeContent(room.codeContent);
+                previousCodeRef.current = room.codeContent;
+                setTimeout(() => { isRemoteChange.current = false; }, 100);
+            }
+
+            if (room.language) setLanguage(room.language);
+
+            // Set session state for host
+            setRoomId(room.roomId);
+            setRoomName(room.roomName || room.roomId);
+            setSubject(room.subject || 'Live Coding Session');
+            setIsInSession(true);
+            setIsHost(true);
+            // Use server participant socketId so host is represented consistently
+            setParticipants(roomParticipants);
+            setActiveTab('session');
+            setSessionStartTime(Date.now());
+            setMobileSessionTab('editor');
+        } catch (e) {
+            console.error('Error initializing created room:', e);
+        }
     });
 
     newSocket.on('room-joined', (room) => {
@@ -1108,7 +1146,7 @@ useEffect(() => {
         
         // Initialize participants with current user as host
         setParticipants([{
-            id: 'self',
+            id: currentSocketIdRef.current || 'self',
             name: userName,
             isHost: true,
             isOnline: true,

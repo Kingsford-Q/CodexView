@@ -195,8 +195,8 @@ io.on('connection', (socket) => {
                 cpp: `#include <iostream>\n\nint main() {\n  std::cout << "Hello, World!\n";\n  return 0;\n}\n`
             };
 
-            // Notify participants that language changed
-            socket.to(roomId).emit('language-updated', language);
+            // Notify participants that language changed (include sender)
+            io.to(roomId).emit('language-updated', language);
 
             // Fetch current room and code content
             const room = await Room.findOne({ roomId });
@@ -224,11 +224,11 @@ io.on('connection', (socket) => {
             }
 
             // Emit a language-changed event with language and the snippet (may be empty)
-            socket.to(roomId).emit('language-changed', { language, snippet: snippetToSend });
+            io.to(roomId).emit('language-changed', { language, snippet: snippetToSend });
 
             // Also ensure clients get the mirrored code content (for compatibility)
             if (snippetToSend) {
-                socket.to(roomId).emit('code-mirrored', snippetToSend);
+                io.to(roomId).emit('code-mirrored', snippetToSend);
             }
         } catch (error) {
             console.error('Error changing language:', error);
