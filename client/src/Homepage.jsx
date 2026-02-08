@@ -177,9 +177,14 @@ const Homepage = () => {
                 setActiveTab('session');
                 setSessionStartTime(Date.now());
                 setMobileSessionTab('editor');
-                ensureMic().then((ok) => {
-                    if (!ok) addNotification('Microphone permission not granted', 'info');
-                });
+                // On mobile, don't auto-request microphone (requires user gesture). Prompt user to enable.
+                if (window.innerWidth < 1024) {
+                    addNotification('Tap "Enable Microphone" in Voice Controls to allow audio (required on mobile).', 'info');
+                } else {
+                    ensureMic().then((ok) => {
+                        if (!ok) addNotification('Microphone permission not granted', 'info');
+                    });
+                }
             }
         }
     });
@@ -772,52 +777,111 @@ useEffect(() => {
                 return true;
             }
         }
-        
         try {
-            // Check if getUserMedia is available
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                console.warn('getUserMedia not supported');
-                addNotification('Microphone not supported on this device', 'error');
+            // Secure context is required for getUserMedia on many browsers (including iOS)
+            if (!window.isSecureContext) {
+                console.warn('Insecure context - getUserMedia requires HTTPS');
+                addNotification('Microphone requires a secure (HTTPS) connection. Open this page in Safari over HTTPS.', 'error');
                 return false;
             }
 
-            // Request microphone permission with mobile-compatible settings
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                },
-                video: false
-            });
-            
-            if (!stream) {
-                console.warn('No stream returned from getUserMedia');
-                addNotification('Failed to access microphone', 'error');
-                return false;
+            // Detect iOS devices to provide better guidance
+            const isIOS = /iP(ad|hone|od)/.test(navigator.platform) || (navigator.userAgent.includes('Mac') && 'ontouchend' in document);
+
+            // Prefer modern API
+            const md = navigator.mediaDevices;
+            const hasModern = !!(md && md.getUserMedia);
+
+            // Try modern getUserMedia first
+            if (hasModern) {
+                try {
+                    const stream = await md.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        },
+                        video: false
+                    });
+
+                    if (!stream) {
+                        console.warn('No stream returned from getUserMedia');
+                        addNotification('Failed to access microphone', 'error');
+                        return false;
+                    }
+
+                    const track = stream.getAudioTracks()[0];
+                    if (!track) {
+                        console.warn('No audio track in stream');
+                        stream.getTracks().forEach(t => t.stop());
+                        addNotification('No audio tracks available', 'error');
+                        return false;
+                    }
+
+                    micStreamRef.current = stream;
+                    micTrackRef.current = track;
+                    console.log('Microphone access granted');
+                    addNotification('Microphone enabled', 'success');
+                    return true;
+                } catch (err) {
+                    // If permission denied or not available, fallthrough to legacy or show helpful messages
+                    console.error('getUserMedia error:', err);
+                    if (err && err.name === 'NotAllowedError') {
+                        addNotification('Microphone permission denied. Tap the page and allow microphone access in the browser prompt or in Settings.', 'error');
+                        return false;
+                    }
+                    if (err && err.name === 'NotFoundError') {
+                        addNotification('No microphone found on this device', 'error');
+                        return false;
+                    }
+                    // For other errors, try legacy fallback
+                }
             }
-            
-            const track = stream.getAudioTracks()[0];
-            if (!track) {
-                console.warn('No audio track in stream');
-                stream.getTracks().forEach(t => t.stop());
-                addNotification('No audio tracks available', 'error');
-                return false;
+
+            // Legacy fallback for older webviews/browsers
+            const legacyGetUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            if (legacyGetUserMedia) {
+                const stream = await new Promise((resolve, reject) => {
+                    try {
+                        legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject);
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+
+                if (!stream) {
+                    addNotification('Failed to access microphone (legacy API)', 'error');
+                    return false;
+                }
+
+                const track = stream.getAudioTracks && stream.getAudioTracks()[0];
+                if (!track) {
+                    addNotification('No audio tracks available (legacy)', 'error');
+                    return false;
+                }
+
+                micStreamRef.current = stream;
+                micTrackRef.current = track;
+                addNotification('Microphone enabled (legacy)', 'success');
+                return true;
             }
-            
-            micStreamRef.current = stream;
-            micTrackRef.current = track;
-            console.log('Microphone access granted');
-            addNotification('Microphone enabled', 'success');
-            return true;
+
+            // If we reach here, microphone API is not available
+            console.warn('getUserMedia not supported');
+            if (isIOS) {
+                addNotification('Microphone not supported in this browser. On iPhone, open this page in Safari (not in-app browser) and ensure the site is loaded over HTTPS.', 'error');
+            } else {
+                addNotification('Microphone not supported on this device or browser', 'error');
+            }
+            return false;
         } catch (error) {
             console.error('Error getting microphone access:', error);
             // Provide user-friendly error messages
-            if (error.name === 'NotAllowedError') {
+            if (error && error.name === 'NotAllowedError') {
                 addNotification('Microphone permission denied. Enable in settings to use voice.', 'error');
-            } else if (error.name === 'NotFoundError') {
+            } else if (error && error.name === 'NotFoundError') {
                 addNotification('No microphone found on this device', 'error');
-            } else if (error.name === 'NotReadableError') {
+            } else if (error && error.name === 'NotReadableError') {
                 addNotification('Microphone is already in use by another app', 'error');
             } else {
                 addNotification('Failed to access microphone', 'error');
@@ -2288,6 +2352,19 @@ useEffect(() => {
                                         >
                                             {isMutedByHost && !isMuted ? '🔒 Muted by Host' : (isMuted ? '🔇 Unmute' : '🎤 Mute')}
                                         </button>
+
+                                        {/* Mobile: show explicit enable microphone button to trigger permission prompt */}
+                                        {(!micTrackRef.current && typeof window !== 'undefined' && window.innerWidth < 1024) && (
+                                            <button
+                                                onClick={async () => {
+                                                    const ok = await ensureMic();
+                                                    if (!ok) addNotification('Microphone permission not granted', 'info');
+                                                }}
+                                                className="flex-1 px-4 py-2 rounded-lg font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-all"
+                                            >
+                                                Enable Microphone
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
