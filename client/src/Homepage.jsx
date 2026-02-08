@@ -1368,23 +1368,19 @@ useEffect(() => {
         const participant = participants.find(p => p.id === participantId);
         if (!participant) return;
         
-        const isCurrentlyMuted = participant.isMuted;
+        // Determine if participant is currently muted by host (not self-muted)
+        const isCurrentlyHostMuted = participant.isMutedByHost;
         
-        // Update UI
-        setParticipants(prev => prev.map(p => 
-            p.id === participantId ? { ...p, isMuted: !p.isMuted } : p
-        ));
-        
-        // Emit appropriate event based on CURRENT state
+        // Emit appropriate event based on CURRENT host-mute state
         if (socket && roomId) {
-            if (isCurrentlyMuted) {
-                // Currently muted, so unmute
+            if (isCurrentlyHostMuted) {
+                // Currently host-muted, so unmute
                 socket.emit('unmute-participant', {
                     roomId,
                     socketId: participantId
                 });
             } else {
-                // Currently not muted, so mute
+                // Currently not host-muted, so mute
                 socket.emit('mute-participant', {
                     roomId,
                     socketId: participantId
@@ -2531,9 +2527,9 @@ useEffect(() => {
                                                         <button
                                                             onClick={() => handleMuteParticipant(participant.id)}
                                                             className="p-1.5 hover:bg-gray-200 rounded transition-all"
-                                                            title={participant.isMuted ? "Unmute" : "Mute"}
+                                                            title={participant.isMutedByHost ? "Unmute" : "Mute"}
                                                         >
-                                                            {participant.isMuted ? '🔊' : '🔇'}
+                                                            {participant.isMutedByHost ? '🔊' : '🔇'}
                                                         </button>
                                                         <button
                                                             onClick={() => handleRemoveParticipant(participant.id)}
