@@ -235,17 +235,25 @@ const Homepage = () => {
     // Sync full participant list from server (useful after reconnection)
     newSocket.on('sync-participants', ({ participants: serverParticipants }) => {
         console.log('Syncing participants from server:', serverParticipants);
-        const formattedParticipants = serverParticipants.map(p => ({
-            id: p.socketId,
-            name: p.name,
-            isHost: p.isHost,
-            isOnline: true,
-            isMuted: false,
-            isSelfMuted: false,
-            isMutedByHost: false,
-            isSpeaking: false
-        }));
-        setParticipants(formattedParticipants);
+        // Preserve existing mute states for participants already in the list
+        setParticipants(prev => {
+            const updatedParticipants = serverParticipants.map(p => {
+                // Find existing participant to preserve mute state
+                const existing = prev.find(ep => ep.id === p.socketId);
+                return {
+                    id: p.socketId,
+                    name: p.name,
+                    isHost: p.isHost,
+                    isOnline: true,
+                    // Preserve mute states from existing if available, otherwise default to false
+                    isMuted: existing?.isMuted ?? false,
+                    isSelfMuted: existing?.isSelfMuted ?? false,
+                    isMutedByHost: existing?.isMutedByHost ?? false,
+                    isSpeaking: existing?.isSpeaking ?? false
+                };
+            });
+            return updatedParticipants;
+        });
     });
 
     newSocket.on('you-were-removed', ({ reason }) => {
@@ -258,11 +266,14 @@ const Homepage = () => {
         console.log('You were muted by host');
         setIsMutedByHost(true);
         setIsMuted(true);
-        setParticipants(prev => prev.map(p => 
-            (p.id === currentSocketIdRef.current || p.name === userName || p.id === 'self')
-                ? { ...p, isMuted: true, isMutedByHost: true }
-                : p
-        ));
+        setParticipants(prev => prev.map(p => {
+            // Match current user by socket ID (most reliable)
+            const isCurrentUser = p.id === currentSocketIdRef.current;
+            if (isCurrentUser) {
+                return { ...p, isMuted: true, isMutedByHost: true, isSelfMuted: false };
+            }
+            return p;
+        }));
         addNotification('You have been muted by the host', 'info');
     });
 
@@ -270,11 +281,14 @@ const Homepage = () => {
         console.log('You were unmuted by host');
         setIsMutedByHost(false);
         setIsMuted(false);
-        setParticipants(prev => prev.map(p => 
-            (p.id === currentSocketIdRef.current || p.name === userName || p.id === 'self')
-                ? { ...p, isMuted: false, isMutedByHost: false, isSelfMuted: false }
-                : p
-        ));
+        setParticipants(prev => prev.map(p => {
+            // Match current user by socket ID (most reliable)
+            const isCurrentUser = p.id === currentSocketIdRef.current;
+            if (isCurrentUser) {
+                return { ...p, isMuted: false, isMutedByHost: false, isSelfMuted: false };
+            }
+            return p;
+        }));
         addNotification('You have been unmuted by the host', 'success');
     });
 
@@ -297,11 +311,20 @@ const Homepage = () => {
 
     // Listen for participant self-mute status changes
     newSocket.on('participant-mute-status', ({ participantId, isSelfMuted, isMuted }) => {
-        setParticipants(prev => prev.map(p => 
-            p.id === participantId
-                ? { ...p, isMuted, isSelfMuted, isMutedByHost: false }
-                : p
-        ));
+        setParticipants(prev => prev.map(p => {
+            // Match participant by socket ID or if it's the current user
+            const isTargetParticipant = p.id === participantId;
+            
+            if (isTargetParticipant) {
+                return { 
+                    ...p, 
+                    isMuted: isMuted || isSelfMuted, 
+                    isSelfMuted: isSelfMuted,
+                    isMutedByHost: isMuted && !isSelfMuted
+                };
+            }
+            return p;
+        }));
     });
 
     newSocket.on('session-ended', ({ reason }) => {
@@ -1194,22 +1217,21 @@ useEffect(() => {
     };
 
     const getMuteStatusMessage = (participant) => {
+        // Determine if this is the current user - use socket ID as primary identifier
+        const isCurrentUser = participant.id === currentSocketIdRef.current;
+        
         if (participant.isMutedByHost) {
-            // Show who muted them
-            if (participant.id === currentSocketIdRef.current || participant.name === userName || participant.id === 'self') {
+            // User is muted by host
+            if (isCurrentUser) {
                 // Current user was muted by host
                 return '🔒 Host muted';
             } else {
-                // Another user was muted by host (only show if I'm the host)
-                if (isHost) {
-                    return '🔒 You muted';
-                } else {
-                    return '🔇 Muted';
-                }
+                // Viewing someone else muted by host
+                return '🔒 Muted';
             }
         } else if (participant.isSelfMuted) {
             // User self-muted
-            if (participant.id === currentSocketIdRef.current || participant.name === userName || participant.id === 'self') {
+            if (isCurrentUser) {
                 return '🔇 Muted';
             } else {
                 return '🔇 Mic muted';
@@ -1228,22 +1250,17 @@ useEffect(() => {
         const newMuteState = !isMuted;
         setIsMuted(newMuteState);
         
-        // Update own participant in list
-        if (newMuteState && !isMutedByHost) {
-            // Muting self
-            setParticipants(prev => prev.map(p => 
-                (p.id === currentSocketIdRef.current || p.name === userName || (p.id === 'self')) 
-                    ? { ...p, isMuted: true, isSelfMuted: true } 
-                    : p
-            ));
-        } else if (!newMuteState && !isMutedByHost) {
-            // Unmuting self
-            setParticipants(prev => prev.map(p => 
-                (p.id === currentSocketIdRef.current || p.name === userName || (p.id === 'self'))
-                    ? { ...p, isMuted: false, isSelfMuted: false }
-                    : p
-            ));
-        }
+        // Update own participant in list using socket ID for reliable matching
+        setParticipants(prev => prev.map(p => {
+            if (p.id === currentSocketIdRef.current) {
+                return { 
+                    ...p, 
+                    isMuted: newMuteState, 
+                    isSelfMuted: newMuteState 
+                };
+            }
+            return p;
+        }));
         
         // Emit to server so others can see the change
         if (socket && roomId) {

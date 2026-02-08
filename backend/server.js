@@ -94,7 +94,7 @@ io.on('connection', (socket) => {
     socket.on('participant-self-muted', async (data) => {
         const { roomId, isMuted } = data;
         try {
-            // Broadcast to all participants in room
+            // Broadcast to ALL participants in room (including the sender)
             io.to(roomId).emit('participant-mute-status', { 
                 participantId: socket.id, 
                 isSelfMuted: isMuted,
