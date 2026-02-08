@@ -164,8 +164,47 @@ io.on('connection', (socket) => {
     socket.on('language-change', async (data) => {
         const { roomId, language } = data;
         try {
+            // Update language in DB
             await Room.updateOne({ roomId }, { language });
+
+            // Determine default snippets for languages
+            const defaultSnippets = {
+                javascript: `// JavaScript example\nfunction greet(name) {\n  console.log('Hello, ' + name + '!');\n}\n\ngreet('World');\n`,
+                python: `# Python example\ndef greet(name):\n    print(f"Hello, {name}!")\n\nif __name__ == '__main__':\n    greet('World')\n`,
+                html: `<!doctype html>\n<html>\n  <head><meta charset=\"utf-8\"><title>Example</title></head>\n  <body>\n    <h1>Hello World</h1>\n  </body>\n</html>\n`,
+                css: `/* CSS example */\nbody {\n  font-family: system-ui, sans-serif;\n  background: #fff;\n  color: #111;\n}\n`,
+                cpp: `#include <iostream>\n\nint main() {\n  std::cout << "Hello, World!\n";\n  return 0;\n}\n`
+            };
+
+            // Notify participants that language changed
             socket.to(roomId).emit('language-updated', language);
+
+            // Fetch current room and code content
+            const room = await Room.findOne({ roomId });
+            let snippetToSend = room?.codeContent || '';
+
+            // If there is no code content (empty or whitespace), set a default snippet for this language
+            if (!snippetToSend || snippetToSend.toString().trim().length === 0) {
+                const key = (language || '').toLowerCase();
+                snippetToSend = defaultSnippets[key] || '';
+
+                // Save default snippet to DB so new participants also receive it
+                if (snippetToSend) {
+                    try {
+                        await Room.updateOne({ roomId }, { codeContent: snippetToSend });
+                    } catch (e) {
+                        console.error('Error saving default snippet:', e);
+                    }
+                }
+            }
+
+            // Emit a language-changed event with language and the snippet (may be empty)
+            socket.to(roomId).emit('language-changed', { language, snippet: snippetToSend });
+
+            // Also ensure clients get the mirrored code content (for compatibility)
+            if (snippetToSend) {
+                socket.to(roomId).emit('code-mirrored', snippetToSend);
+            }
         } catch (error) {
             console.error('Error changing language:', error);
         }

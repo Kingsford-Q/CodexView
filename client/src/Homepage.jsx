@@ -388,26 +388,10 @@ const Homepage = () => {
         const roomFromUrl = params.get('room');
         
         if (roomFromUrl && socket && !isInSession) {
-            // Set the room key and show join room tab
+            // Set the room key and show join room tab so user can enter their name first
             setJoinRoomKey(roomFromUrl);
             setActiveTab('join-room');
-            
-            // Auto-join after a short delay to ensure socket is ready
-            const timer = setTimeout(() => {
-                socket.emit('join-room', {
-                    roomId: roomFromUrl,
-                    userName: userName
-                });
-                
-                // Save session to sessionStorage
-                setSessionData('currentSession', JSON.stringify({
-                    roomId: roomFromUrl,
-                    userName: userName,
-                    isHost: false
-                }));
-            }, 500);
-            
-            return () => clearTimeout(timer);
+            // Do NOT auto-join — allow user to enter a display name before joining
         }
     }, [socket, isInSession]);
 
@@ -703,7 +687,30 @@ useEffect(() => {
         });
     });
 
-    return () => socket.off('language-updated');
+    // Handle language changed with optional default snippet from server
+    socket.on('language-changed', ({ language: newLang, snippet }) => {
+        setLanguage(newLang);
+        addNotification(`Language changed to ${newLang}`, 'info');
+
+        // If the live mirror is empty for this client, populate with the provided snippet
+        const current = previousCodeRef.current || '';
+        if (!current || current.toString().trim().length === 0) {
+            if (snippet) {
+                isRemoteChange.current = true;
+                setCodeContent(snippet);
+                previousCodeRef.current = snippet;
+                // Clear flag shortly after to avoid re-emitting
+                setTimeout(() => {
+                    isRemoteChange.current = false;
+                }, 100);
+            }
+        }
+    });
+
+    return () => {
+        socket.off('language-updated');
+        socket.off('language-changed');
+    };
 }, [socket]);
 
 
