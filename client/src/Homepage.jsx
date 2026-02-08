@@ -2072,63 +2072,63 @@ useEffect(() => {
                 )}
 
                 {activeTab === 'help' && (
-                    <div className="w-full max-w-4xl mx-auto px-4 md:px-6 py-8 md:py-12">
+                    <div className="w-full max-w-4xl mx-auto px-4 md:px-6">
                         <div className="text-center mb-8">
-                            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+                            <h1 className="md:text-2xl text-lg font-bold text-gray-900 mb-2">
                                 Help & Support
                             </h1>
-                            <p className="text-gray-600">
+                            <p className="text-sm text-gray-600">
                                 Get in touch with us or find answers to common questions
                             </p>
                         </div>
 
                         {/* Contact Information */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mb-6">
-                            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Contact Information</h2>
-                            <div className="space-y-4">
-                                <div className="flex items-start gap-4">
-                                    <div className="w-10 h-10 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
-                                        <span className="text-white font-semibold">📧</span>
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                            <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Contact Information</h2>
+                            <div className="space-y-3">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-8 h-8 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-white font-semibold text-xs">📧</span>
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold text-gray-900 mb-1">Email</h3>
-                                        <a href="mailto:support@codexview.com" className="text-[#0663cc] hover:underline">
+                                        <h3 className="font-semibold text-gray-900 text-sm mb-1">Email</h3>
+                                        <a href="mailto:support@codexview.com" className="text-[#0663cc] hover:underline text-sm">
                                             support@codexview.com
                                         </a>
                                     </div>
                                 </div>
 
-                                <div className="flex items-start gap-4">
-                                    <div className="w-10 h-10 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
-                                        <span className="text-white font-semibold">💬</span>
+                                <div className="flex items-start gap-3">
+                                    <div className="w-8 h-8 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-white font-semibold text-xs">💬</span>
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold text-gray-900 mb-1">Discord</h3>
-                                        <a href="https://discord.gg/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline">
+                                        <h3 className="font-semibold text-gray-900 text-sm mb-1">Discord</h3>
+                                        <a href="https://discord.gg/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline text-sm">
                                             Join our Discord server
                                         </a>
                                     </div>
                                 </div>
 
-                                <div className="flex items-start gap-4">
-                                    <div className="w-10 h-10 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
-                                        <span className="text-white font-semibold">🐙</span>
+                                <div className="flex items-start gap-3">
+                                    <div className="w-8 h-8 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-white font-semibold text-xs">🐙</span>
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold text-gray-900 mb-1">GitHub</h3>
-                                        <a href="https://github.com/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline">
+                                        <h3 className="font-semibold text-gray-900 text-sm mb-1">GitHub</h3>
+                                        <a href="https://github.com/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline text-sm">
                                             github.com/codexview
                                         </a>
                                     </div>
                                 </div>
 
-                                <div className="flex items-start gap-4">
-                                    <div className="w-10 h-10 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
-                                        <span className="text-white font-semibold">🐦</span>
+                                <div className="flex items-start gap-3">
+                                    <div className="w-8 h-8 bg-[#0663cc] rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-white font-semibold text-xs">🐦</span>
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold text-gray-900 mb-1">Twitter</h3>
-                                        <a href="https://twitter.com/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline">
+                                        <h3 className="font-semibold text-gray-900 text-sm mb-1">Twitter</h3>
+                                        <a href="https://twitter.com/codexview" target="_blank" rel="noopener noreferrer" className="text-[#0663cc] hover:underline text-sm">
                                             @codexview
                                         </a>
                                     </div>
@@ -2137,32 +2137,32 @@ useEffect(() => {
                         </div>
 
                         {/* Quick Links */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mb-6">
-                            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Quick Links</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <a href="#" className="p-4 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
-                                    <h3 className="font-semibold text-gray-900 mb-1">Documentation</h3>
-                                    <p className="text-sm text-gray-600">Learn how to use CodexView features</p>
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                            <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Quick Links</h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <a href="#" className="p-3 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
+                                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Documentation</h3>
+                                    <p className="text-xs text-gray-600">Learn how to use CodexView features</p>
                                 </a>
-                                <a href="#" className="p-4 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
-                                    <h3 className="font-semibold text-gray-900 mb-1">Video Tutorials</h3>
-                                    <p className="text-sm text-gray-600">Watch step-by-step guides</p>
+                                <a href="#" className="p-3 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
+                                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Video Tutorials</h3>
+                                    <p className="text-xs text-gray-600">Watch step-by-step guides</p>
                                 </a>
-                                <a href="#" className="p-4 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
-                                    <h3 className="font-semibold text-gray-900 mb-1">Report a Bug</h3>
-                                    <p className="text-sm text-gray-600">Found an issue? Let us know</p>
+                                <a href="#" className="p-3 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
+                                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Report a Bug</h3>
+                                    <p className="text-xs text-gray-600">Found an issue? Let us know</p>
                                 </a>
-                                <a href="#" className="p-4 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
-                                    <h3 className="font-semibold text-gray-900 mb-1">Feature Request</h3>
-                                    <p className="text-sm text-gray-600">Suggest new features</p>
+                                <a href="#" className="p-3 border border-gray-200 rounded-lg hover:border-[#0663cc] hover:bg-blue-50 transition-all">
+                                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Feature Request</h3>
+                                    <p className="text-xs text-gray-600">Suggest new features</p>
                                 </a>
                             </div>
                         </div>
 
                         {/* FAQ Section */}
-                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mb-6">
-                            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Frequently Asked Questions</h2>
-                            <div className="space-y-4">
+                        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 md:p-6 mb-16">
+                            <h2 className="md:text-lg text-base font-semibold text-gray-900 mb-4">Frequently Asked Questions</h2>
+                            <div className="space-y-3">
                                 {faqs.map((faq, index) => (
                                     <div
                                         key={index}
@@ -2172,9 +2172,9 @@ useEffect(() => {
                                     >
                                         <button
                                             onClick={() => toggleIndex(index)}
-                                            className="w-full flex justify-between items-center p-4 text-left focus:outline-none"
+                                            className="w-full flex justify-between items-center p-3 text-left focus:outline-none"
                                         >
-                                            <span className="text-gray-900 font-medium">{faq.question}</span>
+                                            <span className="text-gray-900 font-medium text-sm">{faq.question}</span>
                                             <span className="text-gray-500">
                                                 {openIndex === index ? "−" : "+"}
                                             </span>
@@ -2190,14 +2190,14 @@ useEffect(() => {
                         </div>
 
                         {/* Support Hours */}
-                        <div className="bg-linear-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-6 md:p-8 text-white">
-                            <h2 className="text-2xl font-semibold mb-4">Support Hours</h2>
-                            <div className="space-y-2 text-sm">
+                        <div className="bg-linear-to-r from-[#0663cc] to-[#0552a8] rounded-2xl shadow-sm p-4 md:p-6 text-white">
+                            <h2 className="md:text-lg text-base font-semibold mb-3">Support Hours</h2>
+                            <div className="space-y-1 text-xs">
                                 <p><span className="font-semibold">Monday - Friday:</span> 9:00 AM - 6:00 PM EST</p>
                                 <p><span className="font-semibold">Saturday:</span> 10:00 AM - 4:00 PM EST</p>
                                 <p><span className="font-semibold">Sunday:</span> Closed</p>
                             </div>
-                            <p className="mt-4 text-sm opacity-90">
+                            <p className="mt-3 text-xs opacity-90">
                                 We typically respond within 24 hours during support hours.
                             </p>
                         </div>
