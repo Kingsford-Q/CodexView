@@ -235,6 +235,22 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Client can request authoritative room state (codeContent + language)
+    socket.on('request-room-state', async (data) => {
+        const { roomId } = data || {};
+        try {
+            const room = await Room.findOne({ roomId });
+            if (room) {
+                io.to(socket.id).emit('room-state', {
+                    codeContent: room.codeContent || '',
+                    language: room.language || ''
+                });
+            }
+        } catch (err) {
+            console.error('Error handling request-room-state:', err);
+        }
+    });
+
     // Cursor movement
     socket.on('cursor-move', (data) => {
         const { roomId, selection, label } = data;

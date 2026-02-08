@@ -816,6 +816,24 @@ useEffect(() => {
                 isRemoteChange.current = false;
             }, 100);
         }
+        // Request authoritative room state to ensure perfect sync (fallback/confirmation)
+        if (socket && roomId) {
+            socket.emit('request-room-state', { roomId });
+        }
+    });
+
+    // Receive authoritative room-state from server and apply immediately
+    socket.on('room-state', ({ codeContent: serverContent, language: serverLanguage }) => {
+        try {
+            if (serverLanguage) setLanguage(serverLanguage);
+            const content = serverContent || '';
+            isRemoteChange.current = true;
+            setCodeContent(content);
+            previousCodeRef.current = content;
+            setTimeout(() => { isRemoteChange.current = false; }, 100);
+        } catch (e) {
+            console.error('Error applying room-state:', e);
+        }
     });
 
     return () => {
