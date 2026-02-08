@@ -328,12 +328,34 @@ const Homepage = () => {
     });
 
     newSocket.on('session-ended', ({ reason }) => {
-        console.log('Session ended by host');
+        console.log('Session ended by host, reason:', reason);
         addNotification('The session has ended', 'error');
-        // Use setTimeout to ensure state updates happen after the notification
-        setTimeout(() => {
-            handleLeaveSession();
-        }, 100);
+        // Stop microphone
+        stopMic();
+        // Reset all state directly here
+        setIsInSession(false);
+        setActiveTab('home');
+        setSessionStartTime(null);
+        setSessionTimer('00:00:00');
+        setCodeContent('// Welcome to CodexView Live Session\n// Start coding here...\n');
+        setParticipants([{ id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSpeaking: false }]);
+        setNotifications([]);
+        setOutput("");
+        setIsMuted(false);
+        setIsMutedByHost(false);
+        
+        // Clear session from sessionStorage
+        removeSessionData('currentSession');
+        removeSessionData('roomName');
+        removeSessionData('subject');
+        
+        // Reset create room form
+        setRoomName("");
+        setSubject("");
+        setRoomCreated(false);
+        setRoomId("");
+        setCopied(false);
+        setErrors({ roomName: "", subject: "" });
     });
 
     newSocket.on('audio-stream', async ({ participantId, audioData }) => {
@@ -1113,11 +1135,21 @@ useEffect(() => {
     };
 
     const handleEndSession = () => {
-        // Notify backend that host is ending the session
-        // The backend will emit 'session-ended' to everyone, including the host
-        // We'll handle cleanup in the 'session-ended' event handler
-        if (socket && roomId) {
-            socket.emit('leave-room', { roomId });
+        try {
+            // Notify backend that host is ending the session
+            // The backend will emit 'session-ended' to everyone, including the host
+            // We'll handle cleanup in the 'session-ended' event handler
+            if (socket && roomId) {
+                console.log('Emitting leave-room for roomId:', roomId);
+                socket.emit('leave-room', { roomId });
+            } else {
+                console.warn('Cannot end session - socket or roomId missing', { socket: !!socket, roomId });
+                // Fallback: just leave locally if socket isn't working
+                handleLeaveSession();
+            }
+        } catch (error) {
+            console.error('Error ending session:', error);
+            handleLeaveSession();
         }
     };
 
