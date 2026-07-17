@@ -253,7 +253,10 @@ const Homepage = () => {
 
     newSocket.on('participant-left', ({ participantName, participantId }) => {
         console.log('Participant left:', participantName);
-        addNotification(`${participantName} left the session`, 'info');
+        const isSelf = participantId === currentSocketIdRef.current;
+        if (!isSelf) {
+            addNotification(`${participantName} left the session`, 'info');
+        }
         // Remove by both id and name to ensure cleanup
         setParticipants(prev => prev.filter(p => p.name !== participantName && p.id !== participantId));
     });
@@ -282,13 +285,13 @@ const Homepage = () => {
         });
     });
 
-    newSocket.on('you-were-removed', ({ reason }) => {
+    newSocket.on('you-were-removed', () => {
         console.log('You were removed from the session');
         addNotification('You have been removed from the session', 'error');
         handleLeaveSession();
     });
 
-    newSocket.on('you-were-muted', ({ reason }) => {
+    newSocket.on('you-were-muted', () => {
         console.log('You were muted by host');
         setIsMutedByHost(true);
         setIsMuted(true);
@@ -303,7 +306,7 @@ const Homepage = () => {
         addNotification('You have been muted by the host', 'info');
     });
 
-    newSocket.on('you-were-self-muted', ({ reason }) => {
+    newSocket.on('you-were-self-muted', () => {
         console.log('You self-muted on join');
         setIsMuted(true);
         setIsMutedByHost(false);
@@ -318,7 +321,7 @@ const Homepage = () => {
         addNotification('Microphone muted (you can unmute)', 'info');
     });
 
-    newSocket.on('you-were-unmuted', ({ reason, isSelfMuted }) => {
+    newSocket.on('you-were-unmuted', ({ isSelfMuted }) => {
         console.log('You were unmuted by host');
         setIsMutedByHost(false);
         // Only set isMuted if still self-muted
@@ -376,6 +379,10 @@ const Homepage = () => {
 
     newSocket.on('session-ended', ({ reason }) => {
         console.log('Session ended by host, reason:', reason);
+        if (endSessionTimeoutRef.current) {
+            clearTimeout(endSessionTimeoutRef.current);
+            endSessionTimeoutRef.current = null;
+        }
         addNotification('The session has ended', 'error');
         // Stop microphone
         stopMic();
@@ -462,9 +469,16 @@ const Homepage = () => {
             source.buffer = audioBuffer;
             source.connect(audioSetup.gainNode);
             
-            // Schedule playback for continuous audio
+            // Schedule playback for continuous audio.
+            // Cap how far the queue can drift ahead of real time - without this,
+            // network jitter during long uninterrupted speech makes nextPlayTime creep
+            // further and further ahead, so playback lag keeps growing and never recovers.
             const currentTime = audioSetup.audioContext.currentTime;
-            const startTime = Math.max(currentTime, audioSetup.nextPlayTime);
+            const maxLookahead = 0.2; // seconds
+            const startTime = Math.min(
+                Math.max(currentTime, audioSetup.nextPlayTime),
+                currentTime + maxLookahead
+            );
             source.start(startTime);
             
             // Update next play time to avoid gaps
@@ -543,7 +557,6 @@ const Homepage = () => {
     const menuRef = useRef(null);
     const micStreamRef = useRef(null);
     const micTrackRef = useRef(null);
-    const audioContextRef = useRef(null);
     const audioProcessorRef = useRef(null);
     const remoteAudioStreamsRef = useRef({}); // Store audio elements for each participant
     const editorTextareaRef = useRef(null);
@@ -552,9 +565,11 @@ const Homepage = () => {
     const [fontSize, setFontSize] = useState(14);
     const [snapshots, setSnapshots] = useState([]);
     const editorRef = useRef(null);
+    const monacoRef = useRef(null);
     const remoteCursorsRef = useRef({});
     const lastJoinedNotificationRef = useRef({ name: null, at: 0 });
     const currentSocketIdRef = useRef(null);
+    const endSessionTimeoutRef = useRef(null);
 
     // Example of syncing a peer's cursor
 
@@ -562,16 +577,16 @@ const Homepage = () => {
 useEffect(() => {
     if (!socket) return;
 
-    socket.on('cursor-mirrored', ({ participantId, participantName, position }) => {
-        // ✅ The "Guard": If editor isn't ready yet, just exit and don't crash
-        if (!editorRef.current) return;
+    socket.on('cursor-mirrored', ({ participantId, position }) => {
+        // Guard: if editor/monaco aren't ready yet, or the sender has no cursor position, skip
+        if (!editorRef.current || !monacoRef.current || !position) return;
 
         const { line, column } = position;
         const oldDecorations = remoteCursorsRef.current[participantId] || [];
 
         const newDecorations = editorRef.current.deltaDecorations(oldDecorations, [
             {
-                range: new monaco.Range(line, column, line, column),
+                range: new monacoRef.current.Range(line, column, line, column),
                 options: {
                     className: `remote-cursor-${participantId} remote-cursor-line`,
                     // Removed hoverMessage and beforeContentClassName to hide the label
@@ -591,11 +606,8 @@ useEffect(() => {
 
     let audioContext;
     let processor;
-    let analyser;
-    let dataArray;
     let isSpeaking = false;
     let silenceCounter = 0;
-    let voiceCheckInterval;
 
     const setupAudioProcessing = async () => {
         try {
@@ -622,17 +634,10 @@ useEffect(() => {
             }
 
             const source = audioContext.createMediaStreamSource(micStreamRef.current);
-            
-            // Create analyser for voice activity detection
-            analyser = audioContext.createAnalyser();
-            analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0.8;
-            source.connect(analyser);
-            dataArray = new Uint8Array(analyser.frequencyBinCount);
 
             // Create script processor for audio capture (deprecated but widely supported)
-            // For better support, we'll use a buffer size that works on mobile
-            const bufferSize = 4096;
+            // Smaller buffer = lower capture latency (~43ms @48kHz vs ~85ms at 4096)
+            const bufferSize = 2048;
             processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
             audioProcessorRef.current = processor;
             
@@ -709,9 +714,6 @@ useEffect(() => {
     setupAudioProcessing();
     
     return () => {
-        if (voiceCheckInterval) {
-            clearInterval(voiceCheckInterval);
-        }
         if (processor) {
             processor.disconnect();
         }
@@ -1097,21 +1099,6 @@ useEffect(() => {
         },
     ];
 
-    const [files, setFiles] = useState({
-        "index.js": {
-            name: "index.js",
-            language: "javascript",
-            value: "// Welcome to CodexView\nconsole.log('Hello World');"
-        },
-        "styles.css": {
-            name: "styles.css",
-            language: "css",
-            value: "body { background: #f0f0f0; }"
-        }
-    });
-    const [activeFile, setActiveFile] = useState("index.js");
-
-
     const logo = "</>";
 
     const handleSubmit = (e) => { 
@@ -1172,17 +1159,21 @@ useEffect(() => {
         setIsHost(true);
         setMobileSessionTab('editor');
         
-        // Initialize participants with current user as host
-        setParticipants([{
-            id: currentSocketIdRef.current || 'self',
-            name: userName,
-            isHost: true,
-            isOnline: true,
-            isMuted: false,
-            isSelfMuted: false,
-            isMutedByHost: false,
-            isSpeaking: false
-        }]);
+        // Ensure the host is present without dropping anyone who joined the room
+        // (via a shared link) before the host clicked "Start Session"
+        setParticipants(prev => {
+            const others = prev.filter(p => p.id !== currentSocketIdRef.current && p.id !== '1');
+            return [{
+                id: currentSocketIdRef.current || 'self',
+                name: userName,
+                isHost: true,
+                isOnline: true,
+                isMuted: false,
+                isSelfMuted: false,
+                isMutedByHost: false,
+                isSpeaking: false
+            }, ...others];
+        });
         
         // Save session to sessionStorage for auto-rejoin on refresh
         setSessionData('currentSession', JSON.stringify({
@@ -1208,6 +1199,14 @@ useEffect(() => {
             if (socket && roomId) {
                 console.log('Emitting leave-room for roomId:', roomId);
                 socket.emit('leave-room', { roomId });
+
+                // Safety net: if the server never responds (dropped connection,
+                // packet loss), don't leave the host stuck in a dead session.
+                if (endSessionTimeoutRef.current) clearTimeout(endSessionTimeoutRef.current);
+                endSessionTimeoutRef.current = setTimeout(() => {
+                    console.warn('No session-ended response from server, forcing local cleanup');
+                    handleLeaveSession();
+                }, 3000);
             } else {
                 console.warn('Cannot end session - socket or roomId missing', { socket: !!socket, roomId });
                 // Fallback: just leave locally if socket isn't working
@@ -1219,7 +1218,22 @@ useEffect(() => {
         }
     };
 
+    // Guest voluntarily leaving (as opposed to being removed, or the host
+    // ending the session) - the server doesn't otherwise learn about this,
+    // so without this emit the departing guest lingers as a ghost participant
+    // for everyone else until their socket disconnects.
+    const handleGuestLeaveSession = () => {
+        if (socket && roomId) {
+            socket.emit('leave-room', { roomId });
+        }
+        handleLeaveSession();
+    };
+
     const handleLeaveSession = () => {
+        if (endSessionTimeoutRef.current) {
+            clearTimeout(endSessionTimeoutRef.current);
+            endSessionTimeoutRef.current = null;
+        }
         stopMic();
         
         setIsInSession(false);
@@ -1254,33 +1268,6 @@ useEffect(() => {
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== notification.id));
         }, 5000);
-    };
-
-    const playNotificationSound = (type) => {
-        try {
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            if (type === 'success') {
-                oscillator.frequency.value = 800; // Higher pitch for success
-                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-                oscillator.start(audioContext.currentTime);
-                oscillator.stop(audioContext.currentTime + 0.2);
-            } else if (type === 'error') {
-                oscillator.frequency.value = 400; // Lower pitch for error
-                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-                oscillator.start(audioContext.currentTime);
-                oscillator.stop(audioContext.currentTime + 0.3);
-            }
-        } catch (error) {
-            // Silently fail if audio context not available
-        }
     };
 
     const generateRoomId = () => {
@@ -1443,7 +1430,7 @@ useEffect(() => {
             subject,
             language,
             codeContent,
-            codeHistory: codeHistory,
+            codeHistory: snapshots,
             participants: participants.map(p => ({ name: p.name, isHost: p.isHost })),
             duration: sessionTimer,
             timestamp: new Date().toISOString()
@@ -2292,7 +2279,7 @@ useEffect(() => {
                                             )}
                                             {!isHost && (
                                                 <button
-                                                    onClick={handleLeaveSession}
+                                                    onClick={handleGuestLeaveSession}
                                                     className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-all"
                                                 >
                                                     Leave Session
@@ -2387,10 +2374,11 @@ useEffect(() => {
                         <div className="space-y-4">
                             <div>
                                 <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-2">Tools</label>
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-2 gap-2">
                                     <button onClick={formatCode} className="text-[10px] py-2 bg-blue-50 text-blue-700 rounded-lg font-bold border border-blue-100 hover:bg-blue-100">✨ Format</button>
                                     <button onClick={takeSnapshot} className="text-[10px] py-2 bg-purple-50 text-purple-700 rounded-lg font-bold border border-purple-100 hover:bg-purple-100">📸 Snap</button>
                                     <button onClick={handleDownloadCode} className="text-[10px] py-2 bg-green-50 text-green-700 rounded-lg font-bold border border-green-100 hover:bg-green-100">⬇️ Code</button>
+                                    <button onClick={handleDownloadSession} className="text-[10px] py-2 bg-amber-50 text-amber-700 rounded-lg font-bold border border-amber-100 hover:bg-amber-100">🗂️ Session</button>
                                 </div>
                             </div>
 
@@ -2418,8 +2406,9 @@ useEffect(() => {
     <div className="flex-1 w-full relative min-h-0" onClick={() => setSettingsOpen(false)}> 
     <Editor
 
-        onMount={(editor) => {
+        onMount={(editor, monacoInstance) => {
     editorRef.current = editor;
+    monacoRef.current = monacoInstance;
 
     // Monitor Selection (this includes cursor position + highlighted text)
     editor.onDidChangeCursorSelection((e) => {
