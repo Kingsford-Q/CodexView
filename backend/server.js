@@ -296,9 +296,6 @@ io.on('connection', (socket) => {
                 cpp: `#include <iostream>\n\nint main() {\n  std::cout << "Hello, World!\n";\n  return 0;\n}\n`
             };
 
-            // Notify participants that language changed (include sender)
-            io.to(roomId).emit('language-updated', language);
-
             // Current code content
             let snippetToSend = room?.codeContent || '';
 

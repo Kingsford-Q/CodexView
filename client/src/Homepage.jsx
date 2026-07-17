@@ -561,6 +561,8 @@ const Homepage = () => {
     const remoteAudioStreamsRef = useRef({}); // Store audio elements for each participant
     const editorTextareaRef = useRef(null);
     const [language, setLanguage] = useState("javascript");
+    const languageRef = useRef(language);
+    const languageDetectTimeoutRef = useRef(null);
     const [editorTheme, setEditorTheme] = useState("vs-dark"); // "vs-dark" or "light"
     const [fontSize, setFontSize] = useState(14);
     const [snapshots, setSnapshots] = useState([]);
@@ -570,6 +572,42 @@ const Homepage = () => {
     const lastJoinedNotificationRef = useRef({ name: null, at: 0 });
     const currentSocketIdRef = useRef(null);
     const endSessionTimeoutRef = useRef(null);
+
+    // Keep a ref mirror of language so the debounced auto-detect below always
+    // compares against the latest value, not a stale closure from keystroke time
+    useEffect(() => {
+        languageRef.current = language;
+    }, [language]);
+
+    // Guess the language from what's actually being typed, so a snippet that
+    // looks like Python/HTML/CSS/C++ switches automatically without the host
+    // having to pick it from the dropdown first. Only acts on fairly
+    // unambiguous signals to avoid flip-flopping on short/mixed snippets.
+    const detectLanguage = (code) => {
+        const trimmed = code.trim();
+        if (trimmed.length < 15) return null;
+
+        if (/^<!doctype\s+html/i.test(trimmed) || /<html[\s>]/i.test(trimmed) ||
+            (/<\/[a-z][\w-]*>/i.test(trimmed) && /<[a-z][\w-]*[\s>]/i.test(trimmed))) {
+            return 'html';
+        }
+        if (/#include\s*<\w+/.test(trimmed) || /\bstd::/.test(trimmed) || /\bint\s+main\s*\(/.test(trimmed)) {
+            return 'cpp';
+        }
+        if (/^\s*(def\s+\w+\s*\(|from\s+\w+(\.\w+)*\s+import\b|print\s*\(|if\s+__name__\s*==)/m.test(trimmed) &&
+            !/\b(function|const|let|var)\b|=>|;\s*$/m.test(trimmed)) {
+            return 'python';
+        }
+        if (/^[^{}]*[.#]?[a-zA-Z][\w-]*\s*\{[\s\S]*?:[\s\S]*?;[\s\S]*?\}/.test(trimmed) &&
+            !/\b(function|const|let|var|def\s)\b|=>/.test(trimmed)) {
+            return 'css';
+        }
+        if (/\bfunction\s+\w*\s*\(/.test(trimmed) || /=>\s*[{(]|=>\s*\w/.test(trimmed) ||
+            /console\.log\s*\(/.test(trimmed) || /\b(const|let|var)\s+\w+\s*=/.test(trimmed)) {
+            return 'javascript';
+        }
+        return null;
+    };
 
     // Example of syncing a peer's cursor
 
@@ -801,6 +839,16 @@ const handleCodeChange = (value) => {
             content: newContent
         });
     }
+
+    // Auto-detect the language once typing pauses, so it can switch without
+    // the host manually touching the dropdown
+    if (languageDetectTimeoutRef.current) clearTimeout(languageDetectTimeoutRef.current);
+    languageDetectTimeoutRef.current = setTimeout(() => {
+        const detected = detectLanguage(newContent);
+        if (detected && detected !== languageRef.current) {
+            handleLanguageChange(detected);
+        }
+    }, 900);
 };
 
 const handleLanguageChange = (newLanguage) => {
@@ -818,18 +866,6 @@ const handleLanguageChange = (newLanguage) => {
 
 useEffect(() => {
     if (!socket) return;
-
-    // Listen for the mirror event from the server
-    socket.on('language-updated', (newLang) => {
-        setLanguage(newLang);
-        
-        // Optional: Show a small notification that language was changed by host
-        addNotification({
-            id: Date.now(),
-            message: `Language switched to ${newLang}`,
-            type: 'info'
-        });
-    });
 
     // Handle language changed with optional default snippet from server
     socket.on('language-changed', ({ language: newLang, snippet }) => {
@@ -866,8 +902,8 @@ useEffect(() => {
     });
 
     return () => {
-        socket.off('language-updated');
         socket.off('language-changed');
+        socket.off('room-state');
     };
 }, [socket]);
 
@@ -1516,7 +1552,10 @@ useEffect(() => {
 
     // Cleanup mic on unmount just in case
     useEffect(() => {
-        return () => stopMic();
+        return () => {
+            stopMic();
+            if (languageDetectTimeoutRef.current) clearTimeout(languageDetectTimeoutRef.current);
+        };
     }, []);
 
     // Auto-resize textarea on mobile
