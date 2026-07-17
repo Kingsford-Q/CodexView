@@ -3,8 +3,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import connectDB from './utils/db.js';
-import Room from './models/Room.js';
+import roomStore from './utils/roomStore.js';
 
 dotenv.config();
 
@@ -27,8 +26,6 @@ const io = new Server(server, {
     pingTimeout: 60000,
 });
 
-connectDB();
-
 const PORT = process.env.PORT || 5000;
 
 // Health check route for Render / browser
@@ -37,7 +34,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api/ping", (req, res) => {
-    res.json({ status: "OK", message: "MongoDB connected" });
+    res.json({ status: "OK", message: "Server running" });
 });
 
 app.use((req, res) => {
@@ -50,6 +47,25 @@ app.use((req, res) => {
 const mutedParticipants = {};
 // Track self-muted participants separately (can unmute themselves)
 const selfMutedParticipants = {};
+// roomId -> timeout: grace period after a host disconnects (e.g. page refresh)
+// before the session is actually ended for everyone else
+const pendingHostEnd = {};
+const HOST_DISCONNECT_GRACE_MS = Number(process.env.HOST_DISCONNECT_GRACE_MS) || 30000;
+
+const clearPendingHostEnd = (roomId) => {
+    if (pendingHostEnd[roomId]) {
+        clearTimeout(pendingHostEnd[roomId]);
+        delete pendingHostEnd[roomId];
+    }
+};
+
+const endSession = (roomId, reason) => {
+    clearPendingHostEnd(roomId);
+    io.in(roomId).emit('session-ended', { reason });
+    roomStore.deleteRoom(roomId);
+    delete mutedParticipants[roomId];
+    delete selfMutedParticipants[roomId];
+};
 
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
@@ -138,21 +154,15 @@ io.on('connection', (socket) => {
     });
 
     // Room creation
-    socket.on('create-room', async (data) => {
+    socket.on('create-room', (data) => {
         const { roomId, roomName, subject, hostName } = data;
         try {
-            let room = await Room.findOne({ roomId });
+            let room = roomStore.getRoom(roomId);
             if (room) {
                 socket.emit('error', 'Room already exists.');
                 return;
             }
-            room = new Room({
-                roomId,
-                roomName,
-                subject,
-                participants: [{ socketId: socket.id, name: hostName, isHost: true }],
-            });
-            await room.save();
+            room = roomStore.createRoom({ roomId, roomName, subject, hostSocketId: socket.id, hostName });
             socket.join(roomId);
             socket.emit('room-created', room);
         } catch (error) {
@@ -162,23 +172,25 @@ io.on('connection', (socket) => {
     });
 
     // Joining a room
-    socket.on('join-room', async (data) => {
+    socket.on('join-room', (data) => {
         const { roomId, userName, wasHost } = data;
         try {
-            let room = await Room.findOne({ roomId });
+            let room = roomStore.getRoom(roomId);
             if (!room) {
                 socket.emit('error', 'Room not found.');
                 return;
             }
-            
+
             // Check if user already exists in the room (by name) to prevent duplicates on reconnect
             const existingParticipant = room.participants.find(p => p.name === userName);
             if (existingParticipant) {
                 // Update existing participant's socket ID
                 existingParticipant.socketId = socket.id;
-                await room.save();
                 socket.join(roomId);
                 socket.emit('room-joined', room);
+
+                // Host reconnected (e.g. page refresh) before the grace period expired
+                if (existingParticipant.isHost) clearPendingHostEnd(roomId);
 
                 // If this participant was previously muted on this room, notify them and the room
                 if (mutedParticipants[roomId] && mutedParticipants[roomId][socket.id]) {
@@ -195,7 +207,10 @@ io.on('connection', (socket) => {
             const isHost = wasHost === true;
             const newParticipant = { socketId: socket.id, name: userName, isHost };
             room.participants.push(newParticipant);
-            await room.save();
+
+            // Host reconnected (e.g. page refresh) before the grace period expired
+            if (isHost) clearPendingHostEnd(roomId);
+
             socket.join(roomId);
             io.to(roomId).emit('participant-joined', { room, newParticipant });
             socket.emit('room-joined', room);
@@ -253,10 +268,11 @@ io.on('connection', (socket) => {
     });
 
     // Code updates
-    socket.on('code-update', async (data) => {
+    socket.on('code-update', (data) => {
         const { roomId, content } = data;
         try {
-            await Room.updateOne({ roomId }, { codeContent: content });
+            const room = roomStore.getRoom(roomId);
+            if (room) room.codeContent = content;
             socket.to(roomId).emit('code-mirrored', content);
         } catch (error) {
             console.error('Error updating code:', error);
@@ -264,11 +280,12 @@ io.on('connection', (socket) => {
     });
 
     // Language changes
-    socket.on('language-change', async (data) => {
+    socket.on('language-change', (data) => {
         const { roomId, language } = data;
         try {
-            // Update language in DB
-            await Room.updateOne({ roomId }, { language });
+            // Update language in memory
+            const room = roomStore.getRoom(roomId);
+            if (room) room.language = language;
 
             // Determine default snippets for languages
             const defaultSnippets = {
@@ -282,13 +299,12 @@ io.on('connection', (socket) => {
             // Notify participants that language changed (include sender)
             io.to(roomId).emit('language-updated', language);
 
-            // Fetch current room and code content
-            const room = await Room.findOne({ roomId });
+            // Current code content
             let snippetToSend = room?.codeContent || '';
 
             // Check if code is empty or just the default "Welcome to CodexView" template
-            const isDefaultOrEmpty = !snippetToSend || 
-                                     snippetToSend.toString().trim().length === 0 || 
+            const isDefaultOrEmpty = !snippetToSend ||
+                                     snippetToSend.toString().trim().length === 0 ||
                                      snippetToSend.includes('Welcome to CodexView') ||
                                      snippetToSend.includes('console.log("Hello World")') ||
                                      snippetToSend.includes("console.log('Hello World')");
@@ -297,13 +313,9 @@ io.on('connection', (socket) => {
                 const key = (language || '').toLowerCase();
                 snippetToSend = defaultSnippets[key] || '';
 
-                // Save default snippet to DB so new participants also receive it
-                if (snippetToSend) {
-                    try {
-                        await Room.updateOne({ roomId }, { codeContent: snippetToSend });
-                    } catch (e) {
-                        console.error('Error saving default snippet:', e);
-                    }
+                // Save default snippet in memory so new participants also receive it
+                if (snippetToSend && room) {
+                    room.codeContent = snippetToSend;
                 }
             }
 
@@ -320,10 +332,10 @@ io.on('connection', (socket) => {
     });
 
     // Client can request authoritative room state (codeContent + language)
-    socket.on('request-room-state', async (data) => {
+    socket.on('request-room-state', (data) => {
         const { roomId } = data || {};
         try {
-            const room = await Room.findOne({ roomId });
+            const room = roomStore.getRoom(roomId);
             if (room) {
                 io.to(socket.id).emit('room-state', {
                     codeContent: room.codeContent || '',
@@ -374,23 +386,25 @@ io.on('connection', (socket) => {
     });
 
     // Remove participant
-    socket.on('remove-participant', async (data) => {
+    socket.on('remove-participant', (data) => {
         const { roomId, socketId } = data;
         try {
-            let room = await Room.findOne({ roomId });
+            let room = roomStore.getRoom(roomId);
             if (room) {
                 const participant = room.participants.find(p => p.socketId === socketId);
                 room.participants = room.participants.filter(p => p.socketId !== socketId);
-                await room.save();
-                
+
                 // Notify the removed user
                 io.to(socketId).emit('you-were-removed', { reason: 'Removed by host' });
                 
                 // Notify all users in room about removal
                 io.to(roomId).emit('participant-left', { room, participantName: participant?.name, participantId: socketId });
-                
+
                 // Sync full participant list to all remaining users
                 io.to(roomId).emit('sync-participants', { participants: room.participants });
+
+                if (mutedParticipants[roomId]) delete mutedParticipants[roomId][socketId];
+                if (selfMutedParticipants[roomId]) delete selfMutedParticipants[roomId][socketId];
             }
         } catch (error) {
             console.error('Error removing participant:', error);
@@ -398,32 +412,31 @@ io.on('connection', (socket) => {
     });
 
     // User leaving room
-    socket.on('leave-room', async (data) => {
+    socket.on('leave-room', (data) => {
         const { roomId } = data;
         try {
-            let room = await Room.findOne({ roomId });
+            let room = roomStore.getRoom(roomId);
             if (room) {
                 const participant = room.participants.find(p => p.socketId === socket.id);
                 const participantName = participant?.name || 'Unknown';
                 const isHost = participant?.isHost;
-                
+
                 room.participants = room.participants.filter(p => p.socketId !== socket.id);
-                
-                // If host is leaving, end the entire session by deleting the room
+
+                // If host is leaving, end the entire session for everyone
                 if (isHost) {
-                    // Notify all room members (including host) that session has ended BEFORE leaving
-                    io.in(roomId).emit('session-ended', { reason: 'Host ended the session' });
-                    await Room.deleteOne({ roomId });
+                    endSession(roomId, 'Host ended the session');
                 } else {
                     // Regular participant leaving
-                    room.participants = room.participants.filter(p => p.socketId !== socket.id);
-                    await room.save();
                     io.to(roomId).emit('participant-left', { room, participantName, participantId: socket.id });
-                    
+
                     // Sync full participant list to all remaining users
                     io.to(roomId).emit('sync-participants', { participants: room.participants });
+
+                    if (mutedParticipants[roomId]) delete mutedParticipants[roomId][socket.id];
+                    if (selfMutedParticipants[roomId]) delete selfMutedParticipants[roomId][socket.id];
                 }
-                
+
                 // Remove socket from room
                 socket.leave(roomId);
             }
@@ -433,22 +446,42 @@ io.on('connection', (socket) => {
     });
 
     // Disconnect
-    socket.on('disconnect', async () => {
+    socket.on('disconnect', () => {
         console.log(`Socket disconnected: ${socket.id}`);
         try {
-            const room = await Room.findOne({ "participants.socketId": socket.id });
+            const room = roomStore.getRoomByParticipantSocketId(socket.id);
             if (room) {
                 const participant = room.participants.find(p => p.socketId === socket.id);
+                const wasHost = participant?.isHost;
+                const roomId = room.roomId;
+
                 room.participants = room.participants.filter(p => p.socketId !== socket.id);
-                await room.save();
-                io.to(room.roomId).emit('participant-left', { room, participantName: participant?.name, participantId: socket.id });
-                
+                io.to(roomId).emit('participant-left', { room, participantName: participant?.name, participantId: socket.id });
+
                 // Sync full participant list to all remaining users
-                io.to(room.roomId).emit('sync-participants', { participants: room.participants });
-                
+                io.to(roomId).emit('sync-participants', { participants: room.participants });
+
                 // Clean up muted participants data for this socket
-                for (const roomId in mutedParticipants) {
-                    delete mutedParticipants[roomId][socket.id];
+                for (const rid in mutedParticipants) {
+                    delete mutedParticipants[rid][socket.id];
+                }
+                for (const rid in selfMutedParticipants) {
+                    delete selfMutedParticipants[rid][socket.id];
+                }
+
+                // The host disconnecting (closed tab, dropped connection, or a page
+                // refresh) shouldn't instantly kill the session - a refresh reconnects
+                // and rejoins as host within seconds via sessionStorage. Give it a grace
+                // period, and only actually end things if no host has shown back up.
+                if (wasHost) {
+                    clearPendingHostEnd(roomId);
+                    pendingHostEnd[roomId] = setTimeout(() => {
+                        delete pendingHostEnd[roomId];
+                        const currentRoom = roomStore.getRoom(roomId);
+                        if (currentRoom && !currentRoom.participants.some(p => p.isHost)) {
+                            endSession(roomId, 'Host disconnected');
+                        }
+                    }, HOST_DISCONNECT_GRACE_MS);
                 }
             }
         } catch (error) {
@@ -457,17 +490,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const startServer = async () => {
-    try {
-        await connectDB(); // wait for MongoDB to connect first
-        server.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
-        });
-    } catch (error) {
-        console.error('❌ Failed to start server:', error);
-        process.exit(1);
-    }
-};
-
-startServer();
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
 

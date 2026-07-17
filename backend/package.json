@@ -12,8 +12,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
-    "mongodb": "^7.0.0",
-    "mongoose": "^8.21.0",
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
