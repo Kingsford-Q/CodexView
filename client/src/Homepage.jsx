@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useEffect, useRef } from "react";
 import Editor from '@monaco-editor/react';
+// Loaded on demand (see runCode) - it's a ~400KB interpreter that only a
+// fraction of visitors ever touch, so it shouldn't bloat everyone's bundle
 
 import easy from './assets/easy.svg';
 import live from './assets/live.svg';
@@ -12,6 +14,56 @@ import img1 from './assets/img1.jpg';
 import img2 from './assets/img2.jpg';
 import img3 from './assets/img3.jpg';
 import { io } from "socket.io-client";
+
+// Languages the Run button can actually execute, entirely client-side:
+// JS natively, Python via Pyodide, C++ via the JSCPP interpreter, HTML via a
+// sandboxed iframe preview. Everything else in the dropdown is edit/highlight
+// only (no compiler/interpreter available in the browser for it).
+const RUNNABLE_LANGUAGES = ['javascript', 'python', 'html', 'cpp'];
+
+// value -> dropdown label, grouped for the <select>. Values are Monaco's own
+// basic-language ids so syntax highlighting works out of the box.
+const LANGUAGE_GROUPS = [
+    {
+        label: 'Run & Edit',
+        options: [
+            ['javascript', 'JavaScript (Native)'],
+            ['python', 'Python (Pyodide)'],
+            ['cpp', 'C++ (JSCPP)'],
+            ['html', 'HTML (Live Preview)'],
+        ],
+    },
+    {
+        label: 'Edit & Highlight Only',
+        options: [
+            ['css', 'CSS'],
+            ['scss', 'SCSS'],
+            ['typescript', 'TypeScript'],
+            ['java', 'Java'],
+            ['csharp', 'C#'],
+            ['go', 'Go'],
+            ['rust', 'Rust'],
+            ['php', 'PHP'],
+            ['ruby', 'Ruby'],
+            ['swift', 'Swift'],
+            ['kotlin', 'Kotlin'],
+            ['dart', 'Dart'],
+            ['scala', 'Scala'],
+            ['lua', 'Lua'],
+            ['perl', 'Perl'],
+            ['r', 'R'],
+            ['objective-c', 'Objective-C'],
+            ['sql', 'SQL'],
+            ['shell', 'Shell / Bash'],
+            ['powershell', 'PowerShell'],
+            ['dockerfile', 'Dockerfile'],
+            ['yaml', 'YAML'],
+            ['json', 'JSON'],
+            ['xml', 'XML'],
+            ['markdown', 'Markdown'],
+        ],
+    },
+];
 
 const Homepage = () => {
     const [activeTab, setActiveTab] = useState('home');
@@ -28,6 +80,7 @@ const Homepage = () => {
     const [copied, setCopied] = useState(false);
     const [codeContent, setCodeContent] = useState('// Welcome to CodexView\nconsole.log("Hello World");');
     const [output, setOutput] = useState("");
+    const [htmlPreviewDoc, setHtmlPreviewDoc] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
     const isRemoteChange = useRef(false);
     const [socket, setSocket] = useState(null);
@@ -395,6 +448,7 @@ const Homepage = () => {
         setParticipants([{ id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSpeaking: false }]);
         setNotifications([]);
         setOutput("");
+        setHtmlPreviewDoc("");
         setIsMuted(false);
         setIsMutedByHost(false);
         
@@ -580,28 +634,94 @@ const Homepage = () => {
     }, [language]);
 
     // Guess the language from what's actually being typed, so a snippet that
-    // looks like Python/HTML/CSS/C++ switches automatically without the host
-    // having to pick it from the dropdown first. Only acts on fairly
-    // unambiguous signals to avoid flip-flopping on short/mixed snippets.
+    // looks like Python/Go/Rust/SQL/... switches automatically without the
+    // host having to pick it from the dropdown first. Only acts on fairly
+    // unambiguous signals (checked most-specific-first) to avoid flip-flopping
+    // on short/mixed snippets or misfiring on plain prose/comments.
     const detectLanguage = (code) => {
         const trimmed = code.trim();
         if (trimmed.length < 15) return null;
+
+        // JSON - unambiguous, just try to parse it
+        if (/^[{[]/.test(trimmed)) {
+            try {
+                JSON.parse(trimmed);
+                return 'json';
+            } catch {
+                // fall through to other checks
+            }
+        }
+
+        if (/^<\?xml\s/.test(trimmed)) return 'xml';
+        if (/^<\?php\b/.test(trimmed)) return 'php';
 
         if (/^<!doctype\s+html/i.test(trimmed) || /<html[\s>]/i.test(trimmed) ||
             (/<\/[a-z][\w-]*>/i.test(trimmed) && /<[a-z][\w-]*[\s>]/i.test(trimmed))) {
             return 'html';
         }
+
+        if (/\bpackage\s+main\b/.test(trimmed) && /\bfunc\s+\w+\s*\(/.test(trimmed)) return 'go';
+        if (/\bfn\s+\w+\s*\(/.test(trimmed) && (/\bprintln!\s*\(/.test(trimmed) || /\blet\s+mut\b/.test(trimmed))) return 'rust';
+        if (/\bpublic\s+class\s+\w+/.test(trimmed) && /\bpublic\s+static\s+void\s+main\s*\(/.test(trimmed)) return 'java';
+        if (/\busing\s+System\s*;/.test(trimmed) || (/\bnamespace\s+\w+/.test(trimmed) && /\bstatic\s+void\s+Main\s*\(/.test(trimmed))) return 'csharp';
+        if (/\bfun\s+main\s*\(/.test(trimmed)) return 'kotlin';
+        if (/\bimport\s+'dart:/.test(trimmed)) return 'dart';
+        if (/\bobject\s+\w+\s+extends\s+App\b/.test(trimmed)) return 'scala';
+        if (/@interface\b|@implementation\b/.test(trimmed)) return 'objective-c';
+        if (/\bfunc\s+\w+\s*\(/.test(trimmed) && /\bimport\s+(Foundation|SwiftUI|UIKit)\b/.test(trimmed)) return 'swift';
+
         if (/#include\s*<\w+/.test(trimmed) || /\bstd::/.test(trimmed) || /\bint\s+main\s*\(/.test(trimmed)) {
             return 'cpp';
         }
-        if (/^\s*(def\s+\w+\s*\(|from\s+\w+(\.\w+)*\s+import\b|print\s*\(|if\s+__name__\s*==)/m.test(trimmed) &&
+
+        if (/^\s*(def\s+\w+\s*\([^)]*\)\s*:|from\s+\w+(\.\w+)*\s+import\b|if\s+__name__\s*==)/m.test(trimmed) &&
             !/\b(function|const|let|var)\b|=>|;\s*$/m.test(trimmed)) {
             return 'python';
         }
+
+        if (/^\s*use\s+strict\s*;/m.test(trimmed) || (/\bmy\s+\$\w+/.test(trimmed) && /;\s*$/m.test(trimmed))) return 'perl';
+        if (/\w\s*<-\s*(function\s*\(|\S)/.test(trimmed) && /\bfunction\s*\(/.test(trimmed)) return 'r';
+
+        if (/^\s*(def\s+\w+.*[^:)]\s*$|def\s+\w+\s*$)/m.test(trimmed) && /^\s*end\s*$/m.test(trimmed)) return 'ruby';
+        if (/\bputs\s+/.test(trimmed) && /^\s*end\s*$/m.test(trimmed)) return 'ruby';
+        if (/\blocal\s+function\b/.test(trimmed) && /^\s*end\s*$/m.test(trimmed)) return 'lua';
+
+        if (/\b(SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|CREATE\s+TABLE\b|UPDATE\b[\s\S]*\bSET\b)/i.test(trimmed)) return 'sql';
+
+        if (/^#!.*\b(bash|sh|zsh)\b/m.test(trimmed) ||
+            (/\bif\s*\[.+\]/.test(trimmed) && /\bfi\b/.test(trimmed)) ||
+            (/\bfor\s+\w+\s+in\b/.test(trimmed) && /\bdone\b/.test(trimmed))) {
+            return 'shell';
+        }
+
+        if (/^\s*FROM\s+\S+/m.test(trimmed) && /^\s*(RUN|CMD|WORKDIR|COPY|EXPOSE|ENTRYPOINT)\b/m.test(trimmed)) {
+            return 'dockerfile';
+        }
+
+        if ((/\bWrite-Host\b|\bWrite-Output\b/.test(trimmed) || /\b[A-Z][a-z]+-[A-Z][a-z]+\b/.test(trimmed)) && /\$\w+/.test(trimmed)) {
+            return 'powershell';
+        }
+
+        if (/^---\s*$/m.test(trimmed) ||
+            (/^[\w.-]+:\s+\S/m.test(trimmed) && !/[{};]/.test(trimmed) && !/\bfunction\b|\bdef\s/.test(trimmed))) {
+            return 'yaml';
+        }
+
+        if (/^#{1,6}\s+\S/m.test(trimmed) && (/\[.+\]\(.+\)/.test(trimmed) || /^[-*]\s+\S/m.test(trimmed) || /\*\*.+\*\*/.test(trimmed))) {
+            return 'markdown';
+        }
+
         if (/^[^{}]*[.#]?[a-zA-Z][\w-]*\s*\{[\s\S]*?:[\s\S]*?;[\s\S]*?\}/.test(trimmed) &&
             !/\b(function|const|let|var|def\s)\b|=>/.test(trimmed)) {
             return 'css';
         }
+
+        if (/\binterface\s+\w+\s*\{[\s\S]*?:\s*[\w<>[\].,\s|]+;/.test(trimmed) || /\btype\s+\w+\s*=/.test(trimmed) ||
+            (/:\s*(string|number|boolean|any|void|unknown|never)\b/.test(trimmed) &&
+            (/\bfunction\s+\w*\s*\(/.test(trimmed) || /=>\s*[{(]|=>\s*\w/.test(trimmed) || /\b(const|let|var)\s+\w+/.test(trimmed)))) {
+            return 'typescript';
+        }
+
         if (/\bfunction\s+\w*\s*\(/.test(trimmed) || /=>\s*[{(]|=>\s*\w/.test(trimmed) ||
             /console\.log\s*\(/.test(trimmed) || /\b(const|let|var)\s+\w+\s*=/.test(trimmed)) {
             return 'javascript';
@@ -1280,6 +1400,7 @@ useEffect(() => {
         setParticipants([{ id: '1', name: 'You', isHost: true, isOnline: true, isMuted: false, isSpeaking: false }]);
         setNotifications([]);
         setOutput("");
+        setHtmlPreviewDoc("");
         setIsMuted(false);
         setIsMutedByHost(false);
         
@@ -1431,15 +1552,34 @@ useEffect(() => {
     const getFileExtension = () => {
         const extensionMap = {
             javascript: 'js',
+            typescript: 'ts',
             python: 'py',
             html: 'html',
             css: 'css',
+            scss: 'scss',
             cpp: 'cpp',
             java: 'java',
             csharp: 'cs',
-            ruby: 'rb',
             go: 'go',
             rust: 'rs',
+            php: 'php',
+            ruby: 'rb',
+            swift: 'swift',
+            kotlin: 'kt',
+            dart: 'dart',
+            scala: 'scala',
+            lua: 'lua',
+            perl: 'pl',
+            r: 'r',
+            'objective-c': 'm',
+            sql: 'sql',
+            shell: 'sh',
+            powershell: 'ps1',
+            dockerfile: 'dockerfile',
+            yaml: 'yaml',
+            json: 'json',
+            xml: 'xml',
+            markdown: 'md',
         };
         return extensionMap[language] || 'txt';
     };
@@ -1595,7 +1735,18 @@ useEffect(() => {
     }, []);
 
     const runCode = async () => {
+    if (language === 'html') {
+        setOutput("");
+        setHtmlPreviewDoc(codeContent);
+        return;
+    }
+    setHtmlPreviewDoc("");
+
     setOutput("Running...\n");
+    // Yield one tick so "Running..." actually paints before a (possibly slow,
+    // synchronous) interpreter run blocks the main thread
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     const logs = [];
     const customLogger = (...args) => {
         logs.push(args.map(arg => String(arg)).join(' '));
@@ -1609,8 +1760,8 @@ useEffect(() => {
         } catch (err) {
             setOutput(`JS Error: ${err.message}`);
         }
-    } 
-    
+    }
+
     else if (language === 'python') {
         try {
             // Load Pyodide if it's not already loaded
@@ -1619,13 +1770,35 @@ useEffect(() => {
                 return;
             }
             const pyodide = await window.loadPyodide();
-            
+
             // Redirect Python's print() to our console
             pyodide.setStdout({ batched: (str) => customLogger(str) });
-            
+
             await pyodide.runPythonAsync(codeContent);
         } catch (err) {
             setOutput(`Python Error: ${err.message}`);
+        }
+    }
+
+    else if (language === 'cpp') {
+        try {
+            const { default: JSCPP } = await import('JSCPP');
+            // Raw-concatenate (unlike customLogger) since cout writes arrive as
+            // fragments - the program's own endl/\n already control line breaks
+            let buffer = '';
+            JSCPP.run(codeContent, '', {
+                stdio: {
+                    write: (s) => {
+                        buffer += s;
+                        setOutput(buffer);
+                    },
+                    drain: () => '',
+                },
+                // Bounds runaway/infinite loops instead of freezing the tab forever
+                maxTimeout: 5000,
+            });
+        } catch (err) {
+            setOutput(`C++ Error: ${err.message}`);
         }
     }
 };
@@ -2344,10 +2517,10 @@ useEffect(() => {
             
             <button
                 onClick={runCode}
-                disabled={!['javascript', 'python', 'html'].includes(language)}
+                disabled={!RUNNABLE_LANGUAGES.includes(language)}
                 className={`px-3 py-1.5 text-white text-[10px] md:text-xs h-8 font-bold rounded flex items-center gap-1 shadow-sm transition-all ${
-                    ['javascript', 'python', 'html'].includes(language) 
-                    ? 'bg-green-600 hover:bg-green-700 shadow-green-100' 
+                    RUNNABLE_LANGUAGES.includes(language)
+                    ? 'bg-green-600 hover:bg-green-700 shadow-green-100'
                     : 'bg-gray-300 cursor-not-allowed opacity-50'
                 }`}
             >
@@ -2371,16 +2544,18 @@ useEffect(() => {
                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">
                                     Coding Language
                                 </label>
-                                <select 
+                                <select
                                     value={language}
                                     onChange={(e) => handleLanguageChange(e.target.value)}
                                     className="w-full text-xs border border-gray-200 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 font-bold text-gray-700"
                                 >
-                                    <option value="javascript">JavaScript (Native)</option>
-                                    <option value="python">Python (Pyodide)</option>
-                                    <option value="html">HTML (Static)</option>
-                                    <option value="css">CSS (Styles)</option>
-                                    <option value="cpp">C++ (Highlight Only)</option>
+                                    {LANGUAGE_GROUPS.map((group) => (
+                                        <optgroup key={group.label} label={group.label}>
+                                            {group.options.map(([value, label]) => (
+                                                <option key={value} value={value}>{label}</option>
+                                            ))}
+                                        </optgroup>
+                                    ))}
                                 </select>
                             </div>
                         )}
@@ -2486,6 +2661,22 @@ useEffect(() => {
         }}
     />
 </div>
+
+    {/* HTML Live Preview */}
+    {language === 'html' && htmlPreviewDoc && (
+        <div className="h-64 md:h-72 bg-white flex flex-col border-t border-gray-800 shadow-inner shrink-0">
+            <div className="flex justify-between items-center text-gray-500 bg-[#0d0d0d] px-3 py-2 border-b border-gray-800/50">
+                <span className="text-[9px] font-bold uppercase tracking-[0.2em]">Live Preview</span>
+                <button onClick={() => setHtmlPreviewDoc("")} className="hover:text-red-500 text-[10px] font-bold bg-gray-900 px-2 py-0.5 rounded border border-gray-800 transition-colors">CLOSE</button>
+            </div>
+            <iframe
+                title="HTML preview"
+                srcDoc={htmlPreviewDoc}
+                sandbox="allow-scripts"
+                className="flex-1 w-full bg-white"
+            />
+        </div>
+    )}
 
     {/* Console Output */}
     {output && language !== 'html' && (

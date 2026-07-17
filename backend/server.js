@@ -290,10 +290,34 @@ io.on('connection', (socket) => {
             // Determine default snippets for languages
             const defaultSnippets = {
                 javascript: `// JavaScript example\nfunction greet(name) {\n  console.log('Hello, ' + name + '!');\n}\n\ngreet('World');\n`,
+                typescript: `// TypeScript example\nfunction greet(name: string): void {\n  console.log(\`Hello, \${name}!\`);\n}\n\ngreet('World');\n`,
                 python: `# Python example\ndef greet(name):\n    print(f"Hello, {name}!")\n\nif __name__ == '__main__':\n    greet('World')\n`,
                 html: `<!doctype html>\n<html>\n  <head><meta charset=\"utf-8\"><title>Example</title></head>\n  <body>\n    <h1>Hello World</h1>\n  </body>\n</html>\n`,
                 css: `/* CSS example */\nbody {\n  font-family: system-ui, sans-serif;\n  background: #fff;\n  color: #111;\n}\n`,
-                cpp: `#include <iostream>\n\nint main() {\n  std::cout << "Hello, World!\n";\n  return 0;\n}\n`
+                scss: `// SCSS example\n$primary: #0663cc;\n\nbody {\n  font-family: system-ui, sans-serif;\n  color: $primary;\n}\n`,
+                cpp: `#include <iostream>\nusing namespace std;\n\nint main() {\n  cout << "Hello, World!" << endl;\n  return 0;\n}\n`,
+                java: `public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}\n`,
+                csharp: `using System;\n\nclass Program {\n    static void Main() {\n        Console.WriteLine("Hello, World!");\n    }\n}\n`,
+                go: `package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Hello, World!")\n}\n`,
+                rust: `fn main() {\n    println!("Hello, World!");\n}\n`,
+                php: `<?php\necho "Hello, World!";\n`,
+                ruby: `def greet(name)\n  puts "Hello, #{name}!"\nend\n\ngreet("World")\n`,
+                swift: `import Foundation\n\nfunc greet(name: String) {\n    print("Hello, \\(name)!")\n}\n\ngreet(name: "World")\n`,
+                kotlin: `fun main() {\n    println("Hello, World!")\n}\n`,
+                dart: `void main() {\n  print('Hello, World!');\n}\n`,
+                scala: `object Main extends App {\n  println("Hello, World!")\n}\n`,
+                lua: `local function greet(name)\n    print("Hello, " .. name .. "!")\nend\n\ngreet("World")\n`,
+                perl: `use strict;\nuse warnings;\n\nmy $name = "World";\nprint "Hello, $name!\\n";\n`,
+                r: `greet <- function(name) {\n  cat("Hello,", name, "\\n")\n}\n\ngreet("World")\n`,
+                'objective-c': `#import <Foundation/Foundation.h>\n\nint main() {\n    NSLog(@"Hello, World!");\n    return 0;\n}\n`,
+                sql: `SELECT id, name\nFROM users\nWHERE active = 1\nORDER BY name;\n`,
+                shell: `#!/bin/bash\necho "Hello, World!"\n`,
+                powershell: `$name = "World"\nWrite-Host "Hello, $name!"\n`,
+                dockerfile: `FROM node:20\nWORKDIR /app\nCOPY . .\nRUN npm install\nCMD ["node", "index.js"]\n`,
+                yaml: `name: my-app\nversion: 1.0.0\nservices:\n  web:\n    image: nginx\n`,
+                json: `{\n  "name": "example",\n  "version": "1.0.0"\n}\n`,
+                xml: `<?xml version="1.0" encoding="UTF-8"?>\n<root>\n  <message>Hello, World!</message>\n</root>\n`,
+                markdown: `# Hello, World!\n\nStart writing your notes here.\n`,
             };
 
             // Current code content

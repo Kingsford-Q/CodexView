@@ -12,6 +12,7 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.1.18",
+    "JSCPP": "^2.0.9",
     "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
     "prettier": "^3.8.1",
